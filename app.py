@@ -311,13 +311,36 @@ def get_latest_profile(db_path: str = DB_FILE) -> Optional[Dict[str, Any]]:
 
 
 # =====================================================================
-# PART 2 - MUSIC SEARCH (JioSaavn, iTunes, fallback catalog)
+# PART 2 - JIOSAAVN API ENGINE (Integrated from JioSaavnAPI-master)
+# Includes endpoints.py, helper.py (pyDes decrypt_url + 320kbps/160kbps format_song),
+# and jiosaavn.py (search_for_song, get_song, get_album, get_playlist, get_lyrics)
+# with multi-page search (40+ songs per request + Load More pagination).
 # =====================================================================
+
+import re
+import requests
+try:
+    from pyDes import des, ECB, PAD_PKCS5
+    HAS_PYDES = True
+except ImportError:
+    HAS_PYDES = False
 
 logger = logging.getLogger(__name__)
 
-# JioSaavn Direct API & Public Mirrors
-JIOSAAVN_DIRECT_API = "https://www.jiosaavn.com/api.php"
+# --- Official JioSaavn API Endpoints (from JioSaavnAPI-master/endpoints.py) ---
+search_base_url = "https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&cc=in&includeMetaTags=1&query="
+search_results_base_url = "https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&includeMetaTags=1"
+song_details_base_url = "https://www.jiosaavn.com/api.php?__call=song.getDetails&cc=in&_marker=0%3F_marker%3D0&_format=json&pids="
+album_details_base_url = "https://www.jiosaavn.com/api.php?__call=content.getAlbumDetails&_format=json&cc=in&_marker=0%3F_marker%3D0&albumid="
+playlist_details_base_url = "https://www.jiosaavn.com/api.php?__call=playlist.getDetails&_format=json&cc=in&_marker=0%3F_marker%3D0&listid="
+lyrics_base_url = "https://www.jiosaavn.com/api.php?__call=lyrics.getLyrics&ctx=web6dot0&api_version=4&_format=json&_marker=0%3F_marker%3D0&lyrics_id="
+
+REQ_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://www.jiosaavn.com/"
+}
+
 SAAVN_MIRRORS = [
     "https://saavn.dev/api",
     "https://saavn.sumit.co/api",
@@ -325,25 +348,14 @@ SAAVN_MIRRORS = [
 ]
 ITUNES_API = "https://itunes.apple.com/search"
 
-# Guaranteed HTTPS audio streams for final fallback
 GUARANTEED_STREAMS = [
     "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
     "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
     "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-11.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3"
+    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3"
 ]
 
-# Expanded Curated Catalog for Telugu, Hindi, English & Punjabi
 FALLBACK_CATALOG = [
-    # Telugu Hits
     {
         "id": "telugu_01",
         "title": "Samajavaragamana",
@@ -356,62 +368,6 @@ FALLBACK_CATALOG = [
         "backup_urls": [GUARANTEED_STREAMS[0], GUARANTEED_STREAMS[1]]
     },
     {
-        "id": "telugu_02",
-        "title": "Butta Bomma",
-        "artist": "Armaan Malik, Thaman S",
-        "album": "Ala Vaikunthapurramuloo",
-        "duration": 198,
-        "language": "telugu",
-        "image_url": "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[1],
-        "backup_urls": [GUARANTEED_STREAMS[1], GUARANTEED_STREAMS[2]]
-    },
-    {
-        "id": "telugu_03",
-        "title": "Srivalli",
-        "artist": "Sid Sriram, Devi Sri Prasad",
-        "album": "Pushpa: The Rise",
-        "duration": 221,
-        "language": "telugu",
-        "image_url": "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[2],
-        "backup_urls": [GUARANTEED_STREAMS[2], GUARANTEED_STREAMS[3]]
-    },
-    {
-        "id": "telugu_04",
-        "title": "Oo Antava Oo Oo Antava",
-        "artist": "Indravathi Chauhan, DSP",
-        "album": "Pushpa: The Rise",
-        "duration": 228,
-        "language": "telugu",
-        "image_url": "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[3],
-        "backup_urls": [GUARANTEED_STREAMS[3], GUARANTEED_STREAMS[4]]
-    },
-    {
-        "id": "telugu_05",
-        "title": "Naatu Naatu",
-        "artist": "Rahul Sipligunj, Kaala Bhairava, M. M. Keeravani",
-        "album": "RRR",
-        "duration": 215,
-        "language": "telugu",
-        "image_url": "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[4],
-        "backup_urls": [GUARANTEED_STREAMS[4], GUARANTEED_STREAMS[5]]
-    },
-    {
-        "id": "telugu_06",
-        "title": "Kurchi Madathapetti",
-        "artist": "Sri Krishna, Sahithi Chaganti, Thaman S",
-        "album": "Guntur Kaaram",
-        "duration": 218,
-        "language": "telugu",
-        "image_url": "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[5],
-        "backup_urls": [GUARANTEED_STREAMS[5], GUARANTEED_STREAMS[0]]
-    },
-    # Hindi Hits
-    {
         "id": "hindi_01",
         "title": "Kesariya",
         "artist": "Arijit Singh, Pritam",
@@ -419,43 +375,9 @@ FALLBACK_CATALOG = [
         "duration": 268,
         "language": "hindi",
         "image_url": "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[6],
-        "backup_urls": [GUARANTEED_STREAMS[6], GUARANTEED_STREAMS[7]]
+        "media_url": GUARANTEED_STREAMS[1],
+        "backup_urls": [GUARANTEED_STREAMS[1], GUARANTEED_STREAMS[2]]
     },
-    {
-        "id": "hindi_02",
-        "title": "Chaleya",
-        "artist": "Arijit Singh, Shilpa Rao, Anirudh",
-        "album": "Jawan",
-        "duration": 200,
-        "language": "hindi",
-        "image_url": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[7],
-        "backup_urls": [GUARANTEED_STREAMS[7], GUARANTEED_STREAMS[8]]
-    },
-    {
-        "id": "hindi_03",
-        "title": "Apna Bana Le",
-        "artist": "Arijit Singh, Sachin-Jigar",
-        "album": "Bhediya",
-        "duration": 261,
-        "language": "hindi",
-        "image_url": "https://images.unsplash.com/photo-1465847899084-d164df4dedc6?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[8],
-        "backup_urls": [GUARANTEED_STREAMS[8], GUARANTEED_STREAMS[9]]
-    },
-    {
-        "id": "hindi_04",
-        "title": "Tum Hi Ho",
-        "artist": "Arijit Singh, Mithoon",
-        "album": "Aashiqui 2",
-        "duration": 262,
-        "language": "hindi",
-        "image_url": "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[9],
-        "backup_urls": [GUARANTEED_STREAMS[9], GUARANTEED_STREAMS[0]]
-    },
-    # English Hits
     {
         "id": "english_01",
         "title": "Blinding Lights",
@@ -464,400 +386,409 @@ FALLBACK_CATALOG = [
         "duration": 200,
         "language": "english",
         "image_url": "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[10],
-        "backup_urls": [GUARANTEED_STREAMS[10], GUARANTEED_STREAMS[11]]
-    },
-    {
-        "id": "english_02",
-        "title": "Shape of You",
-        "artist": "Ed Sheeran",
-        "album": "Divide",
-        "duration": 233,
-        "language": "english",
-        "image_url": "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[11],
-        "backup_urls": [GUARANTEED_STREAMS[11], GUARANTEED_STREAMS[0]]
-    },
-    {
-        "id": "english_03",
-        "title": "Starboy",
-        "artist": "The Weeknd, Daft Punk",
-        "album": "Starboy",
-        "duration": 230,
-        "language": "english",
-        "image_url": "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[0],
-        "backup_urls": [GUARANTEED_STREAMS[0], GUARANTEED_STREAMS[1]]
-    },
-    {
-        "id": "english_04",
-        "title": "Levitating",
-        "artist": "Dua Lipa",
-        "album": "Future Nostalgia",
-        "duration": 203,
-        "language": "english",
-        "image_url": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[1],
-        "backup_urls": [GUARANTEED_STREAMS[1], GUARANTEED_STREAMS[2]]
-    },
-    # Punjabi Hits
-    {
-        "id": "punjabi_01",
-        "title": "Excuses",
-        "artist": "AP Dhillon, Gurinder Gill",
-        "album": "Hidden Gems",
-        "duration": 176,
-        "language": "punjabi",
-        "image_url": "https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=500&auto=format&fit=crop&q=80",
         "media_url": GUARANTEED_STREAMS[2],
         "backup_urls": [GUARANTEED_STREAMS[2], GUARANTEED_STREAMS[3]]
-    },
-    {
-        "id": "punjabi_02",
-        "title": "Brown Munde",
-        "artist": "AP Dhillon, Gurinder Gill, Shinda Kahlon",
-        "album": "Brown Munde",
-        "duration": 268,
-        "language": "punjabi",
-        "image_url": "https://images.unsplash.com/photo-1445985543470-41fdd6ce388d?w=500&auto=format&fit=crop&q=80",
-        "media_url": GUARANTEED_STREAMS[3],
-        "backup_urls": [GUARANTEED_STREAMS[3], GUARANTEED_STREAMS[4]]
     }
 ]
 
 
 def _ensure_https(url: str) -> str:
-    """Upgrades http:// URLs to https:// to prevent Android/Chrome mixed-content blocks."""
     if not url:
         return ""
-    u = url.strip()
+    u = str(url).strip()
     if u.startswith("http://"):
         return "https://" + u[7:]
     return u
 
 
-def _build_bitrate_variants(stream_url: str, preview_url: str = "") -> List[str]:
-    """Generates ordered fallback stream URLs (320kbps -> 160kbps -> 96kbps -> preview)."""
-    base = _ensure_https(stream_url)
-    prev = _ensure_https(preview_url)
-    variants = []
+# --- Helper functions from JioSaavnAPI-master/helper.py ---
 
-    if base:
-        for br in ["_320.mp4", "_160.mp4", "_96.mp4"]:
-            for existing in ["_320.mp4", "_160.mp4", "_96.mp4", "_96_p.mp4"]:
-                if existing in base:
-                    candidate = base.replace(existing, br).replace("preview.saavncdn.com", "aac.saavncdn.com")
-                    if candidate not in variants:
-                        variants.append(candidate)
-        if base not in variants:
-            variants.insert(0, base)
-
-    if prev:
-        # Upgrade preview URL to full stream variants as well
-        for br in ["_320.mp4", "_160.mp4", "_96.mp4"]:
-            cand = prev.replace("preview.saavncdn.com", "aac.saavncdn.com").replace("_96_p.mp4", br)
-            if cand not in variants:
-                variants.append(cand)
-        if prev not in variants:
-            variants.append(prev)
-
-    # Always append a guaranteed stream at the very end so playback never fails
-    variants.append(GUARANTEED_STREAMS[0])
-    return variants
-
-
-def decrypt_jiosaavn_url(encrypted_url: str) -> str:
-    """Decrypts JioSaavn encrypted_media_url using DES-ECB key '38346591'."""
-    if not encrypted_url:
+def format_str(val: Any) -> str:
+    if val is None:
         return ""
-    key = b"38346591"
-    try:
-        raw_bytes = base64.b64decode(encrypted_url.strip())
-    except Exception:
-        return ""
+    s = str(val)
+    return html.unescape(s).replace("&quot;", "'").replace("&amp;", "&").replace("&#039;", "'")
 
-    # Try pyDes first (pure Python in requirements.txt)
-    try:
-        import pyDes
-        cipher = pyDes.des(key, pyDes.ECB, pad=None, padmode=pyDes.PAD_PKCS5)
-        decrypted = cipher.decrypt(raw_bytes, padmode=pyDes.PAD_PKCS5).decode("utf-8", errors="ignore")
-        return _ensure_https(decrypted)
-    except Exception:
-        pass
 
-    # Try cryptography library
-    try:
+def decrypt_url(url: str) -> str:
+    """Decrypts JioSaavn encrypted_media_url using pyDes (key 38346591) or cryptography fallback."""
+    enc_url = base64.b64decode(url.strip())
+    if HAS_PYDES:
+        des_cipher = des(b"38346591", ECB, b"\0\0\0\0\0\0\0\0", pad=None, padmode=PAD_PKCS5)
+        dec_url = des_cipher.decrypt(enc_url, padmode=PAD_PKCS5).decode("utf-8")
+    else:
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
         from cryptography.hazmat.backends import default_backend
-        cipher = Cipher(algorithms.TripleDES(key), modes.ECB(), backend=default_backend())
+        cipher = Cipher(algorithms.TripleDES(b"38346591"), modes.ECB(), backend=default_backend())
         decryptor = cipher.decryptor()
-        dec = decryptor.update(raw_bytes) + decryptor.finalize()
-        pad_len = dec[-1]
-        if isinstance(pad_len, int) and 1 <= pad_len <= 8:
-            dec = dec[:-pad_len]
-        return _ensure_https(dec.decode("utf-8", errors="ignore"))
+        raw = decryptor.update(enc_url) + decryptor.finalize()
+        dec_url = raw[:-raw[-1]].decode("utf-8")
+    dec_url = dec_url.replace("_96.mp4", "_320.mp4")
+    return _ensure_https(dec_url)
+
+
+def _parse_saavn_json(raw_text: str) -> Any:
+    """Safely parses JioSaavn JSON responses (handling unescaped quotes in '(From "...")')."""
+    try:
+        return json.loads(raw_text)
     except Exception:
         pass
-
-    return ""
-
-
-def _search_jiosaavn_direct(query: str, limit: int = 25) -> List[Dict[str, Any]]:
-    """Queries official www.jiosaavn.com/api.php directly and extracts high-speed stream links."""
-    params = urllib.parse.urlencode({
-        "__call": "search.getResults",
-        "_format": "json",
-        "_marker": "0",
-        "api_version": "4",
-        "ctx": "web6dot0",
-        "n": str(limit),
-        "p": "1",
-        "q": query
-    })
-    url = f"{JIOSAAVN_DIRECT_API}?{params}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json, text/plain, */*"
-        }
-    )
-    results = []
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            if resp.status == 200:
-                data = json.loads(resp.read().decode("utf-8", errors="ignore"))
-                raw_list = data.get("results", []) if isinstance(data, dict) else []
-                for item in raw_list:
-                    if not isinstance(item, dict):
-                        continue
-                    more = item.get("more_info", {}) or {}
-                    enc_url = more.get("encrypted_media_url") or item.get("encrypted_media_url") or ""
-                    prev_url = more.get("vlink") or more.get("media_preview_url") or item.get("media_preview_url") or ""
-                    dec_url = decrypt_jiosaavn_url(enc_url)
-                    variants = _build_bitrate_variants(dec_url, prev_url)
-                    if not variants:
-                        continue
+        cleaned = raw_text.encode().decode("unicode-escape")
+        pattern = r'\(From "([^"]+)"\)'
+        cleaned = re.sub(pattern, r"(From '\1')", cleaned)
+        return json.loads(cleaned)
+    except Exception:
+        pattern = r'\(From "([^"]+)"\)'
+        return json.loads(re.sub(pattern, r"(From '\1')", raw_text))
 
-                    img = _ensure_https(item.get("image", "")).replace("150x150", "500x500")
-                    artist_map = more.get("artistMap", {}) or {}
-                    primary_artists = artist_map.get("primary_artists", [])
-                    if primary_artists and isinstance(primary_artists, list):
-                        artist_str = ", ".join([html.unescape(a.get("name", "")) for a in primary_artists if isinstance(a, dict)])
-                    else:
-                        artist_str = html.unescape(more.get("music") or item.get("subtitle") or "Various Artists")
 
-                    results.append({
-                        "id": str(item.get("id", "")),
-                        "title": html.unescape(item.get("title") or item.get("song") or "Unknown Title"),
-                        "artist": artist_str,
-                        "album": html.unescape(more.get("album") or ""),
-                        "duration": int(more.get("duration") or item.get("duration") or 210),
-                        "image_url": img or FALLBACK_CATALOG[0]["image_url"],
-                        "media_url": variants[0],
-                        "backup_urls": variants
-                    })
+def format_song(data: Dict[str, Any], lyrics: bool = False) -> Dict[str, Any]:
+    """Formats a raw JioSaavn song dictionary and decrypts its 320kbps/160kbps stream URL."""
+    is_320 = str(data.get("320kbps", "")).lower() == "true"
+    try:
+        media_url = decrypt_url(data["encrypted_media_url"])
+        if not is_320:
+            media_url = media_url.replace("_320.mp4", "_160.mp4")
+        preview_url = (
+            media_url.replace("_320.mp4", "_96_p.mp4")
+            .replace("_160.mp4", "_96_p.mp4")
+            .replace("//aac.", "//preview.")
+        )
+        data["media_url"] = _ensure_https(media_url)
+        data["media_preview_url"] = _ensure_https(preview_url)
+    except (KeyError, TypeError, Exception):
+        url = _ensure_https(data.get("media_preview_url", ""))
+        url = url.replace("preview", "aac")
+        if is_320:
+            url = url.replace("_96_p.mp4", "_320.mp4")
+        else:
+            url = url.replace("_96_p.mp4", "_160.mp4")
+        data["media_url"] = url
+
+    # Build ordered backup stream URLs (320 -> 160 -> 96 -> preview)
+    base_u = data.get("media_url", "")
+    backup_urls = []
+    if base_u:
+        backup_urls.append(base_u)
+        for br in ["_160.mp4", "_96.mp4", "_320.mp4"]:
+            for orig in ["_320.mp4", "_160.mp4", "_96.mp4", "_96_p.mp4"]:
+                if orig in base_u:
+                    cand = base_u.replace(orig, br).replace("preview.saavncdn.com", "aac.saavncdn.com")
+                    if cand not in backup_urls:
+                        backup_urls.append(cand)
+    if data.get("media_preview_url") and data["media_preview_url"] not in backup_urls:
+        backup_urls.append(data["media_preview_url"])
+
+    data["backup_urls"] = backup_urls
+    data["song"] = format_str(data.get("song") or data.get("title") or "Unknown Title")
+    data["music"] = format_str(data.get("music", ""))
+    data["singers"] = format_str(data.get("singers", ""))
+    data["starring"] = format_str(data.get("starring", ""))
+    data["album"] = format_str(data.get("album", ""))
+    data["primary_artists"] = format_str(data.get("primary_artists") or data.get("singers") or data.get("music") or "Various Artists")
+    data["image"] = _ensure_https(str(data.get("image", "")).replace("150x150", "500x500"))
+
+    # Also set standard Musify keys so both JioSaavnAPI and Musify UI work seamlessly
+    data["title"] = data["song"]
+    data["artist"] = data["primary_artists"]
+    data["image_url"] = data["image"]
+    try:
+        data["duration"] = int(data.get("duration") or 210)
+    except (ValueError, TypeError):
+        data["duration"] = 210
+
+    if lyrics:
+        if str(data.get("has_lyrics", "")).lower() == "true":
+            data["lyrics"] = get_lyrics(data.get("id", ""))
+        else:
+            data["lyrics"] = None
+
+    try:
+        data["copyright_text"] = str(data.get("copyright_text", "")).replace("&copy;", "©")
+    except Exception:
+        pass
+    return data
+
+
+def format_album(data: Dict[str, Any], lyrics: bool = False) -> Dict[str, Any]:
+    data["image"] = _ensure_https(str(data.get("image", "")).replace("150x150", "500x500"))
+    data["name"] = format_str(data.get("name", ""))
+    data["primary_artists"] = format_str(data.get("primary_artists", ""))
+    data["title"] = format_str(data.get("title", ""))
+    songs = data.get("songs", [])
+    if isinstance(songs, list):
+        data["songs"] = [format_song(s, lyrics) for s in songs if isinstance(s, dict)]
+    return data
+
+
+def format_playlist(data: Dict[str, Any], lyrics: bool = False) -> Dict[str, Any]:
+    data["firstname"] = format_str(data.get("firstname", ""))
+    data["listname"] = format_str(data.get("listname", ""))
+    songs = data.get("songs", [])
+    if isinstance(songs, list):
+        data["songs"] = [format_song(s, lyrics) for s in songs if isinstance(s, dict)]
+    return data
+
+
+# --- Core Functions from JioSaavnAPI-master/jiosaavn.py ---
+
+def get_song(song_id: str, lyrics: bool = False) -> Optional[Dict[str, Any]]:
+    try:
+        url = song_details_base_url + urllib.parse.quote(str(song_id))
+        resp = requests.get(url, headers=REQ_HEADERS, timeout=6)
+        song_response = _parse_saavn_json(resp.text)
+        if isinstance(song_response, dict) and str(song_id) in song_response:
+            return format_song(song_response[str(song_id)], lyrics)
     except Exception as e:
-        logger.debug(f"Direct JioSaavn API lookup skipped: {e}")
+        logger.debug(f"get_song({song_id}) error: {e}")
+    return None
+
+
+def get_songs_batch(song_ids: List[str], lyrics: bool = False) -> List[Dict[str, Any]]:
+    """Fetches full details for up to 40 song IDs in a single batch call to song.getDetails."""
+    if not song_ids:
+        return []
+    results = []
+    # Process in chunks of 20 IDs per HTTP request for speed and reliability
+    for i in range(0, len(song_ids), 20):
+        chunk = [str(sid).strip() for sid in song_ids[i:i + 20] if sid]
+        if not chunk:
+            continue
+        pids_param = ",".join(chunk)
+        try:
+            url = song_details_base_url + urllib.parse.quote(pids_param)
+            resp = requests.get(url, headers=REQ_HEADERS, timeout=7)
+            data = _parse_saavn_json(resp.text)
+            if isinstance(data, dict):
+                for sid in chunk:
+                    raw_song = data.get(sid)
+                    if isinstance(raw_song, dict):
+                        formatted = format_song(raw_song, lyrics)
+                        if formatted.get("media_url"):
+                            results.append(formatted)
+        except Exception as e:
+            logger.debug(f"Batch get_songs error: {e}")
     return results
 
 
-def _normalize_mirror_song(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Normalizes song item from public JioSaavn mirrors and builds fallback stream array."""
-    song_id = str(raw.get("id") or raw.get("song_id") or "")
-    title = html.unescape(str(raw.get("name") or raw.get("title") or raw.get("song") or "Unknown Title"))
-
-    artists = raw.get("artists", {})
-    if isinstance(artists, dict):
-        prim = artists.get("primary", [])
-        if isinstance(prim, list) and prim:
-            artist_name = ", ".join([html.unescape(a.get("name", "")) for a in prim if isinstance(a, dict)])
-        else:
-            artist_name = html.unescape(str(raw.get("primaryArtists") or "Various Artists"))
-    elif isinstance(artists, list):
-        artist_name = ", ".join([html.unescape(a.get("name", "")) if isinstance(a, dict) else str(a) for a in artists])
-    else:
-        artist_name = html.unescape(str(raw.get("primaryArtists") or raw.get("artist") or "Various Artists"))
-
-    album_info = raw.get("album")
-    album_name = html.unescape(str(album_info.get("name") if isinstance(album_info, dict) else (album_info or "")))
-
-    images = raw.get("image")
-    image_url = ""
-    if isinstance(images, list) and images:
-        last_img = images[-1]
-        image_url = last_img.get("url") or last_img.get("link") if isinstance(last_img, dict) else str(last_img)
-    elif isinstance(images, str):
-        image_url = images
-    image_url = _ensure_https(image_url) or FALLBACK_CATALOG[0]["image_url"]
-
-    # Collect all available download qualities from highest to lowest
-    download_urls = raw.get("downloadUrl")
-    extracted_urls = []
-    if isinstance(download_urls, list):
-        for d in reversed(download_urls):
-            u = d.get("url") or d.get("link") if isinstance(d, dict) else str(d)
-            u = _ensure_https(u)
-            if u and u not in extracted_urls:
-                extracted_urls.append(u)
-    elif isinstance(download_urls, str) and download_urls:
-        extracted_urls.append(_ensure_https(download_urls))
-
-    direct_media = _ensure_https(str(raw.get("media_url") or raw.get("media_preview_url") or ""))
-    if direct_media and direct_media not in extracted_urls:
-        extracted_urls.append(direct_media)
-
-    if not extracted_urls:
+def get_song_id(url: str) -> Optional[str]:
+    try:
+        res = requests.get(url, data=[("bitrate", "320")], headers=REQ_HEADERS, timeout=6)
+        try:
+            return (res.text.split('"pid":"'))[1].split('","')[0]
+        except IndexError:
+            return res.text.split('"song":{"type":"')[1].split('","image":')[0].split('"id":"')[-1]
+    except Exception:
         return None
 
-    variants = _build_bitrate_variants(extracted_urls[0], extracted_urls[-1])
-    for u in extracted_urls:
-        if u not in variants:
-            variants.insert(0, u)
 
-    return {
-        "id": song_id,
-        "title": title,
-        "artist": artist_name,
-        "album": album_name,
-        "duration": int(raw.get("duration") or 210),
-        "image_url": image_url,
-        "media_url": variants[0],
-        "backup_urls": variants
-    }
+def get_album(album_id: str, lyrics: bool = False) -> Optional[Dict[str, Any]]:
+    try:
+        resp = requests.get(album_details_base_url + urllib.parse.quote(str(album_id)), headers=REQ_HEADERS, timeout=6)
+        if resp.status_code == 200:
+            songs_json = _parse_saavn_json(resp.text)
+            return format_album(songs_json, lyrics)
+    except Exception as e:
+        logger.debug(f"get_album error: {e}")
+    return None
 
 
-def _search_saavn_mirrors(query: str, limit: int = 25) -> List[Dict[str, Any]]:
-    """Queries public JioSaavn API mirrors in sequence."""
-    for mirror in SAAVN_MIRRORS:
-        url = f"{mirror}/search/songs?query={urllib.parse.quote(query)}&limit={limit}"
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Musify/2.0"}
-        )
+def get_album_id(input_url: str) -> Optional[str]:
+    try:
+        res = requests.get(input_url, headers=REQ_HEADERS, timeout=6)
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8", errors="ignore"))
-                    raw_items = (
-                        data.get("data", {}).get("results", [])
-                        if isinstance(data.get("data"), dict)
-                        else data.get("results", [])
-                    )
-                    results = []
-                    for item in (raw_items or []):
-                        norm = _normalize_mirror_song(item)
-                        if norm:
-                            results.append(norm)
-                    if results:
-                        return results
+            return res.text.split('"album_id":"')[1].split('"')[0]
+        except IndexError:
+            return res.text.split('"page_id","')[1].split('","')[0]
+    except Exception:
+        return None
+
+
+def get_playlist(list_id: str, lyrics: bool = False) -> Optional[Dict[str, Any]]:
+    try:
+        resp = requests.get(playlist_details_base_url + urllib.parse.quote(str(list_id)), headers=REQ_HEADERS, timeout=6)
+        if resp.status_code == 200:
+            songs_json = _parse_saavn_json(resp.text)
+            return format_playlist(songs_json, lyrics)
+    except Exception as e:
+        logger.debug(f"get_playlist error: {e}")
+    return None
+
+
+def get_playlist_id(input_url: str) -> Optional[str]:
+    try:
+        res = requests.get(input_url, headers=REQ_HEADERS, timeout=6).text
+        try:
+            return res.split('"type":"playlist","id":"')[1].split('"')[0]
+        except IndexError:
+            return res.split('"page_id","')[1].split('","')[0]
+    except Exception:
+        return None
+
+
+def get_lyrics(song_id: str) -> Optional[str]:
+    try:
+        url = lyrics_base_url + urllib.parse.quote(str(song_id))
+        lyrics_json = requests.get(url, headers=REQ_HEADERS, timeout=5).text
+        lyrics_text = json.loads(lyrics_json)
+        return lyrics_text.get("lyrics")
+    except Exception:
+        return None
+
+
+def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 40) -> Any:
+    """
+    Searches JioSaavn using both search.getResults (paginated, up to 40 songs per page)
+    and autocomplete.get + song.getDetails from JioSaavnAPI-master.
+    """
+    clean_q = query.strip()
+    if clean_q.startswith("http") and "saavn.com" in clean_q:
+        sid = get_song_id(clean_q)
+        return get_song(sid, lyrics) if sid else []
+
+    collected_ids = []
+
+    # 1. Paginated search.getResults (returns up to 40 song IDs per page!)
+    try:
+        sr_url = f"{search_results_base_url}&n={limit}&p={page}&q={urllib.parse.quote(clean_q)}"
+        sr_resp = requests.get(sr_url, headers=REQ_HEADERS, timeout=6)
+        sr_data = _parse_saavn_json(sr_resp.text)
+        if isinstance(sr_data, dict):
+            for item in sr_data.get("results", []):
+                if isinstance(item, dict) and item.get("id"):
+                    sid = str(item["id"])
+                    if sid not in collected_ids:
+                        collected_ids.append(sid)
+    except Exception as e:
+        logger.debug(f"search.getResults error: {e}")
+
+    # 2. Also query autocomplete.get from JioSaavnAPI-master on page 1
+    if page == 1 and len(collected_ids) < 15:
+        try:
+            ac_url = search_base_url + urllib.parse.quote(clean_q)
+            ac_resp = requests.get(ac_url, headers=REQ_HEADERS, timeout=6)
+            ac_data = _parse_saavn_json(ac_resp.text)
+            song_response = ac_data.get("songs", {}).get("data", [])
+            if not songdata:
+                return song_response
+            for s in song_response:
+                sid = str(s.get("id", ""))
+                if sid and sid not in collected_ids:
+                    collected_ids.append(sid)
         except Exception as e:
-            logger.debug(f"Mirror {mirror} failed: {e}")
+            logger.debug(f"autocomplete.get error: {e}")
+
+    if collected_ids:
+        songs = get_songs_batch(collected_ids, lyrics=lyrics)
+        if songs:
+            return songs
+
     return []
 
 
-def _search_itunes_fallback(query: str, limit: int = 25) -> List[Dict[str, Any]]:
-    """Queries official Apple iTunes India API for guaranteed high-availability M4A streams."""
-    params = urllib.parse.urlencode({
-        "term": query,
-        "country": "IN",
-        "media": "music",
-        "entity": "song",
-        "limit": str(limit)
-    })
-    url = f"{ITUNES_API}?{params}"
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Musify/2.0"}
-    )
-    results = []
-    try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            if resp.status == 200:
-                data = json.loads(resp.read().decode("utf-8", errors="ignore"))
-                for item in data.get("results", []):
-                    preview = _ensure_https(item.get("previewUrl", ""))
-                    if not preview:
+def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
+    """Fallback to public JioSaavn mirrors if direct jiosaavn.com is geo-blocked."""
+    for mirror in SAAVN_MIRRORS:
+        url = f"{mirror}/search/songs?query={urllib.parse.quote(query)}&page={page}&limit={limit}"
+        try:
+            resp = requests.get(url, headers=REQ_HEADERS, timeout=6)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_items = (
+                    data.get("data", {}).get("results", [])
+                    if isinstance(data.get("data"), dict)
+                    else data.get("results", [])
+                )
+                results = []
+                for raw in (raw_items or []):
+                    if not isinstance(raw, dict):
                         continue
-                    art = _ensure_https(item.get("artworkUrl100", "")).replace("100x100bb", "500x500bb")
-                    dur_secs = int((item.get("trackTimeMillis") or 210000) / 1000)
+                    dls = raw.get("downloadUrl") or []
+                    urls = []
+                    if isinstance(dls, list):
+                        for d in reversed(dls):
+                            u = d.get("url") or d.get("link") if isinstance(d, dict) else str(d)
+                            if u:
+                                urls.append(_ensure_https(u))
+                    elif isinstance(dls, str):
+                        urls.append(_ensure_https(dls))
+                    if not urls:
+                        continue
+                    imgs = raw.get("image") or []
+                    img_u = ""
+                    if isinstance(imgs, list) and imgs:
+                        last = imgs[-1]
+                        img_u = last.get("url") or last.get("link") if isinstance(last, dict) else str(last)
+                    elif isinstance(imgs, str):
+                        img_u = imgs
+                    artists = raw.get("artists", {})
+                    if isinstance(artists, dict) and isinstance(artists.get("primary"), list) and artists["primary"]:
+                        artist_str = ", ".join([format_str(a.get("name", "")) for a in artists["primary"] if isinstance(a, dict)])
+                    else:
+                        artist_str = format_str(raw.get("primaryArtists") or raw.get("artist") or "Various Artists")
+                    album_info = raw.get("album")
+                    album_str = format_str(album_info.get("name") if isinstance(album_info, dict) else (album_info or ""))
                     results.append({
-                        "id": str(item.get("trackId", "")),
-                        "title": item.get("trackName") or "Unknown Title",
-                        "artist": item.get("artistName") or "Various Artists",
-                        "album": item.get("collectionName") or "",
-                        "duration": dur_secs,
-                        "image_url": art or FALLBACK_CATALOG[0]["image_url"],
-                        "media_url": preview,
-                        "backup_urls": [preview, GUARANTEED_STREAMS[0]]
+                        "id": str(raw.get("id", "")),
+                        "title": format_str(raw.get("name") or raw.get("title") or "Unknown Title"),
+                        "artist": artist_str,
+                        "album": album_str,
+                        "duration": int(raw.get("duration") or 210),
+                        "image_url": _ensure_https(img_u) or FALLBACK_CATALOG[0]["image_url"],
+                        "media_url": urls[0],
+                        "backup_urls": urls
                     })
-    except Exception as e:
-        logger.debug(f"iTunes fallback skipped: {e}")
-    return results
+                if results:
+                    return results
+        except Exception:
+            pass
+    return []
 
 
-def search_songs(query: str, limit: int = 25) -> List[Dict[str, Any]]:
+def search_songs(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
     """
-    Multi-tier song search:
-    1. Official JioSaavn Direct API (with DES decryption)
-    2. Public JioSaavn Mirrors
-    3. Official Apple iTunes Music API
-    4. Curated Local Catalog
+    Main search entrypoint for Musify:
+    1. Official JioSaavnAPI-master engine (search.getResults + autocomplete.get + song.getDetails + pyDes)
+    2. Public JioSaavn Mirrors (with pagination)
+    3. Fallback catalog
     """
     clean_q = query.strip()
     if not clean_q:
-        return get_category_songs("home")
+        return get_category_songs("home", page=page)
 
-    # Tier 1: Direct JioSaavn API
-    direct_results = _search_jiosaavn_direct(clean_q, limit=limit)
-    if direct_results:
-        return direct_results
+    # Tier 1: JioSaavnAPI-master direct engine
+    saavn_songs = search_for_song(clean_q, lyrics=False, songdata=True, page=page, limit=limit)
+    if isinstance(saavn_songs, list) and saavn_songs:
+        return saavn_songs
+    elif isinstance(saavn_songs, dict) and saavn_songs.get("media_url"):
+        return [saavn_songs]
 
-    # Tier 2: JioSaavn Mirrors
-    mirror_results = _search_saavn_mirrors(clean_q, limit=limit)
-    if mirror_results:
-        return mirror_results
-
-    # Tier 3: iTunes India Music API
-    itunes_results = _search_itunes_fallback(clean_q, limit=limit)
-    if itunes_results:
-        return itunes_results
-
-    # Tier 4: Offline Curated Catalog
-    q_lower = clean_q.lower()
-    matched = [
-        s for s in FALLBACK_CATALOG
-        if q_lower in s["title"].lower()
-        or q_lower in s["artist"].lower()
-        or q_lower in s["album"].lower()
-        or q_lower in s.get("language", "")
-    ]
-    return matched if matched else FALLBACK_CATALOG
-
-
-def get_category_songs(category: str) -> List[Dict[str, Any]]:
-    """Returns rich Telugu, Hindi, English, Punjabi, or Trending playlists."""
-    cat = category.lower().strip()
-    category_queries = {
-        "home": "Telugu Hindi English Top Hits",
-        "trending": "Trending India Hits",
-        "telugu": "Telugu Top Hits Sid Sriram Thaman DSP Anirudh",
-        "hindi": "Hindi Top Hits Arijit Singh Pritam Bollywood",
-        "english": "English Pop Hits The Weeknd Ed Sheeran Dua Lipa",
-        "punjabi": "Punjabi Top Hits AP Dhillon Diljit Dosanjh"
-    }
-    search_q = category_queries.get(cat, f"{cat} top songs")
-
-    results = search_songs(search_q, limit=25)
-    if results and results != FALLBACK_CATALOG:
-        return results
-
-    if cat in ["telugu", "hindi", "english", "punjabi"]:
-        filtered = [s for s in FALLBACK_CATALOG if s.get("language") == cat]
-        if filtered:
-            return filtered
+    # Tier 2: Public JioSaavn Mirrors
+    mirror_songs = _search_saavn_mirrors(clean_q, page=page, limit=limit)
+    if mirror_songs:
+        return mirror_songs
 
     return FALLBACK_CATALOG
+
+
+def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
+    """Fetches 40+ songs per page for Home, Telugu, Hindi, English, and Punjabi categories."""
+    cat = category.lower().strip()
+    category_queries = {
+        "home": ["Latest Telugu Hindi Top Hits", "Trending India Songs", "Top Hits 2025"],
+        "trending": ["Trending Songs India", "Top Chartbusters", "Viral Hits"],
+        "telugu": ["Telugu Top Hits", "Sid Sriram Thaman DSP Telugu Songs", "Latest Telugu Movie Songs"],
+        "hindi": ["Hindi Top Hits", "Arijit Singh Pritam Bollywood Hits", "Latest Hindi Songs"],
+        "english": ["English Top Hits", "The Weeknd Ed Sheeran Taylor Swift Dua Lipa", "Pop Hits"],
+        "punjabi": ["Punjabi Top Hits", "AP Dhillon Diljit Dosanjh Karan Aujla", "Latest Punjabi Songs"]
+    }
+    queries = category_queries.get(cat, [f"{cat} top songs"])
+    selected_q = queries[(page - 1) % len(queries)]
+    sub_page = ((page - 1) // len(queries)) + 1
+
+    results = search_songs(selected_q, page=sub_page, limit=40)
+    return results if results else FALLBACK_CATALOG
 
 
 # =====================================================================
@@ -2354,9 +2285,28 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
     return state.queue[state.index] || null;
   }
 
+  function ensureHttps(u) {
+    return u ? String(u).trim().replace(/^http:\/\//i, "https://") : "";
+  }
+
   function urlsFor(song) {
-    const list = [song.media_url].concat(song.backup_urls || []);
-    return list.filter((u, i) => u && list.indexOf(u) === i);
+    const raw = [song.media_url].concat(song.backup_urls || []);
+    const expanded = [];
+    raw.forEach((u) => {
+      const clean = ensureHttps(u);
+      if (!clean) return;
+      if (!expanded.includes(clean)) expanded.push(clean);
+      ["_320.mp4", "_160.mp4", "_96.mp4"].forEach((br) => {
+        ["_320.mp4", "_160.mp4", "_96.mp4", "_96_p.mp4"].forEach((orig) => {
+          if (clean.includes(orig)) {
+            const v = clean.replace(orig, br).replace("preview.saavncdn.com", "aac.saavncdn.com");
+            if (!expanded.includes(v)) expanded.push(v);
+          }
+        });
+      });
+    });
+    expanded.push("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3");
+    return expanded;
   }
 
   function updateInfo() {
@@ -2494,17 +2444,30 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
       $("currentTime").textContent = fmt(audio.currentTime);
     }
   });
-  audio.addEventListener("error", () => {
+  audio.addEventListener("error", async () => {
     const s = current();
     if (!s) return;
     const urls = urlsFor(s);
     if (state.urlTry + 1 < urls.length) {
       state.urlTry++;
       startAudio();
-    } else {
-      toast("Could not play this song, skipping...");
-      if (state.queue.length > 1) next(true);
+      return;
     }
+    // Try resolving a fresh stream via iTunes India API if saved link expired
+    if (!s._resolvedFresh) {
+      s._resolvedFresh = true;
+      try {
+        const q = encodeURIComponent((s.title || "") + " " + (s.artist || ""));
+        const r = await fetch("https://itunes.apple.com/search?term=" + q + "&country=IN&media=music&entity=song&limit=3");
+        const j = await r.json();
+        if (j.results && j.results[0] && j.results[0].previewUrl) {
+          audio.src = ensureHttps(j.results[0].previewUrl);
+          audio.play().catch(() => {});
+          return;
+        }
+      } catch (e) {}
+    }
+    if (state.queue.length > 1) next(true);
   });
 
   // ---- Controls ----
@@ -2621,14 +2584,17 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     document.querySelector(".sidebar").classList.remove("mobile-open");
   }
 
+  let currentPage = 1;
+  let activeSearchQuery = "";
+
   // ---------- Song grid ----------
-  function renderSongs(songs) {
-    currentSongs = songs;
-    if (!songs.length) {
+  function renderSongs(songs, append) {
+    currentSongs = append ? currentSongs.concat(songs) : songs;
+    if (!currentSongs.length) {
       $("content").innerHTML = '<div style="color:var(--text-muted);padding:30px 0;">No songs found.</div>';
       return;
     }
-    $("content").innerHTML = '<div class="cards-grid">' + songs.map((s, i) => `
+    $("content").innerHTML = '<div class="cards-grid">' + currentSongs.map((s, i) => `
       <div class="song-card" data-i="${i}">
         <div class="card-img-wrapper">
           <img src="${esc(s.image_url)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
@@ -2645,7 +2611,10 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
           <button data-act="queue" title="Add to queue">+ Queue</button>
           <button data-act="playlist" title="Add to playlist">+ List</button>
         </div>
-      </div>`).join("") + "</div>";
+      </div>`).join("") + '</div>' +
+      '<div style="display:flex;justify-content:center;padding:28px 0 12px 0;">' +
+        '<button id="btnLoadMore" class="btn-primary">Load More Songs</button>' +
+      '</div>';
   }
 
   $("content").addEventListener("click", (e) => {
@@ -2675,21 +2644,51 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
       else toast("This playlist is empty");
     } else if (e.target.closest("#btnDeletePlaylist")) {
       deleteOpenPlaylist();
+    } else if (e.target.closest("#btnLoadMore")) {
+      loadMoreSongs();
     }
   });
 
+  async function loadMoreSongs() {
+    const btn = $("btnLoadMore");
+    if (btn) { btn.textContent = "Loading more songs..."; btn.disabled = true; }
+    currentPage += 1;
+    try {
+      const url = activeSearchQuery
+        ? "/api/search?q=" + encodeURIComponent(activeSearchQuery) + "&page=" + currentPage
+        : "/api/category/" + encodeURIComponent(currentCategory) + "&page=" + currentPage;
+      const fixedUrl = activeSearchQuery
+        ? "/api/search?q=" + encodeURIComponent(activeSearchQuery) + "&page=" + currentPage
+        : "/api/category/" + encodeURIComponent(currentCategory) + "?page=" + currentPage;
+      const data = await api(fixedUrl);
+      const more = data.songs || [];
+      if (more.length) {
+        renderSongs(more, true);
+        toast("Loaded " + more.length + " more songs");
+      } else {
+        toast("No more songs found");
+        if (btn) btn.style.display = "none";
+      }
+    } catch (err) {
+      toast("Could not load more songs");
+      if (btn) { btn.textContent = "Load More Songs"; btn.disabled = false; }
+    }
+  }
+
   async function loadCategory(cat) {
     currentCategory = cat;
+    activeSearchQuery = "";
+    currentPage = 1;
     openPlaylistId = null;
     document.querySelectorAll(".pill-btn").forEach((b) => b.classList.toggle("active", b.dataset.category === cat));
     document.querySelectorAll(".sidebar-playlists .playlist-item").forEach((p) => p.classList.remove("active"));
     const t = TITLES[cat] || [cat.charAt(0).toUpperCase() + cat.slice(1), ""];
     setHeading(t[0], t[1]);
-    showLoading("Loading songs...");
+    showLoading("Loading songs from JioSaavn...");
     closeMobileMenu();
     try {
-      const data = await api("/api/category/" + encodeURIComponent(cat));
-      renderSongs(data.songs || []);
+      const data = await api("/api/category/" + encodeURIComponent(cat) + "?page=1");
+      renderSongs(data.songs || [], false);
     } catch (err) {
       showError("Could not load songs: " + err.message);
     }
@@ -2698,12 +2697,14 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
 
   async function runSearch(q) {
     openPlaylistId = null;
-    setHeading('Results for "' + q + '"', "Searching songs, artists and albums");
-    showLoading("Searching...");
+    activeSearchQuery = q;
+    currentPage = 1;
+    setHeading('Results for "' + q + '"', "Searching JioSaavn catalog...");
+    showLoading("Searching JioSaavn...");
     try {
-      const data = await api("/api/search?q=" + encodeURIComponent(q));
-      setHeading('Results for "' + q + '"', (data.count || 0) + " songs found");
-      renderSongs(data.songs || []);
+      const data = await api("/api/search?q=" + encodeURIComponent(q) + "&page=1");
+      setHeading('Results for "' + q + '"', (data.count || 0) + " songs loaded (tap Load More for more)");
+      renderSongs(data.songs || [], false);
     } catch (err) {
       showError("Search failed: " + err.message);
     }
@@ -2721,24 +2722,45 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     b.addEventListener("click", () => { $("query").value = ""; loadCategory(b.dataset.category); });
   });
 
-  // ---------- Playlists ----------
+  // ---------- Playlists (Dual-Synced: SQLite + Mobile localStorage) ----------
+  function getLocalPlaylists() {
+    try { return JSON.parse(localStorage.getItem("musify_playlists_v3") || "[]"); }
+    catch (e) { return []; }
+  }
+
+  function saveLocalPlaylists(lists) {
+    try { localStorage.setItem("musify_playlists_v3", JSON.stringify(lists)); }
+    catch (e) {}
+  }
+
   async function loadPlaylists() {
+    const box = $("sidebarPlaylists");
+    let localLists = getLocalPlaylists();
     try {
       const data = await api("/api/playlists");
-      const box = $("sidebarPlaylists");
-      const lists = data.playlists || [];
-      if (!lists.length) {
-        box.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px 12px;">No playlists yet. Tap + to create one.</div>';
-        return;
+      const serverLists = data.playlists || [];
+      if (serverLists.length > 0) {
+        localLists = serverLists.map((sp) => {
+          const match = localLists.find((lp) => Number(lp.id) === Number(sp.id) || lp.name === sp.name);
+          const songs = match && Array.isArray(match.songs) ? match.songs : [];
+          return { ...sp, songs, song_count: Math.max(sp.song_count || 0, songs.length) };
+        });
+        saveLocalPlaylists(localLists);
       }
-      box.innerHTML = lists.map((p) => `
-        <div class="playlist-item ${p.id === openPlaylistId ? "active" : ""}" data-id="${p.id}">
-          <span>${esc(p.name)}</span>
-          <span class="song-badge">${p.song_count || 0}</span>
-        </div>`).join("");
-    } catch (err) {
-      $("sidebarPlaylists").innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px 12px;">Playlists unavailable</div>';
+    } catch (err) {}
+
+    if (!localLists.length) {
+      box.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px 12px;">No playlists yet. Tap + to create one.</div>';
+      return;
     }
+    box.innerHTML = localLists.map((p) => {
+      const count = Array.isArray(p.songs) ? Math.max(p.songs.length, p.song_count || 0) : (p.song_count || 0);
+      return `
+        <div class="playlist-item ${Number(p.id) === Number(openPlaylistId) ? "active" : ""}" data-id="${p.id}">
+          <span>${esc(p.name)}</span>
+          <span class="song-badge">${count}</span>
+        </div>`;
+    }).join("");
   }
 
   $("sidebarPlaylists").addEventListener("click", (e) => {
@@ -2746,56 +2768,85 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     if (item) openPlaylist(parseInt(item.dataset.id, 10));
   });
 
+  function renderPlaylistContent(p) {
+    currentSongs = p.songs || [];
+    setHeading(p.name, p.description || (currentSongs.length + " songs"));
+    let html = `
+      <div class="playlist-controls-row" style="margin-bottom:18px;">
+        <button class="btn-primary" id="btnPlayAll">Play All</button>
+        <button class="btn-danger" id="btnDeletePlaylist">Delete Playlist</button>
+      </div>`;
+    if (!currentSongs.length) {
+      html += '<div style="color:var(--text-muted);">This playlist is empty. Add songs using the "+ List" button on any song.</div>';
+    } else {
+      html += '<table class="track-table"><thead><tr><th>Title</th><th>Artist</th><th>Time</th><th></th></tr></thead><tbody>' +
+        currentSongs.map((s, i) => `
+          <tr class="track-row" data-i="${i}" data-entry="${s.id}">
+            <td><div class="track-title-cell"><img src="${esc(s.image_url)}" alt="" onerror="this.style.visibility='hidden'"><span>${esc(s.title)}</span></div></td>
+            <td>${esc(s.artist)}</td>
+            <td>${window.fmtTime(s.duration)}</td>
+            <td><button class="btn-icon-small" data-act="remove" title="Remove">&times;</button></td>
+          </tr>`).join("") + "</tbody></table>";
+    }
+    $("content").innerHTML = html;
+  }
+
   async function openPlaylist(id) {
     openPlaylistId = id;
     closeMobileMenu();
     document.querySelectorAll(".pill-btn").forEach((b) => b.classList.remove("active"));
     showLoading("Loading playlist...");
+    const localLists = getLocalPlaylists();
+    const localMatch = localLists.find((p) => Number(p.id) === Number(id));
     try {
       const data = await api("/api/playlists/" + id);
       const p = data.playlist;
-      currentSongs = p.songs || [];
-      setHeading(p.name, p.description || (p.song_count + " songs"));
-      let html = `
-        <div class="playlist-controls-row" style="margin-bottom:18px;">
-          <button class="btn-primary" id="btnPlayAll">Play All</button>
-          <button class="btn-danger" id="btnDeletePlaylist">Delete Playlist</button>
-        </div>`;
-      if (!currentSongs.length) {
-        html += '<div style="color:var(--text-muted);">This playlist is empty. Add songs using the "+ List" button on any song.</div>';
-      } else {
-        html += '<table class="track-table"><thead><tr><th>Title</th><th>Artist</th><th>Time</th><th></th></tr></thead><tbody>' +
-          currentSongs.map((s, i) => `
-            <tr class="track-row" data-i="${i}" data-entry="${s.id}">
-              <td><div class="track-title-cell"><img src="${esc(s.image_url)}" alt="" onerror="this.style.visibility='hidden'"><span>${esc(s.title)}</span></div></td>
-              <td>${esc(s.artist)}</td>
-              <td>${window.fmtTime(s.duration)}</td>
-              <td><button class="btn-icon-small" data-act="remove" title="Remove">&times;</button></td>
-            </tr>`).join("") + "</tbody></table>";
+      if (localMatch && (!p.songs || !p.songs.length) && localMatch.songs && localMatch.songs.length) {
+        p.songs = localMatch.songs;
       }
-      $("content").innerHTML = html;
+      if (localMatch) {
+        localMatch.songs = p.songs || [];
+        localMatch.song_count = localMatch.songs.length;
+        saveLocalPlaylists(localLists);
+      }
+      renderPlaylistContent(p);
       loadPlaylists();
-    } catch (err) {
-      showError("Could not open playlist: " + err.message);
+      return;
+    } catch (err) {}
+
+    if (localMatch) {
+      renderPlaylistContent(localMatch);
+      loadPlaylists();
+    } else {
+      showError("Could not open playlist.");
     }
   }
 
   async function removeFromOpenPlaylist(entryId) {
+    const localLists = getLocalPlaylists();
+    const pl = localLists.find((p) => Number(p.id) === Number(openPlaylistId));
+    if (pl && Array.isArray(pl.songs)) {
+      pl.songs = pl.songs.filter((s) => String(s.id) !== String(entryId));
+      pl.song_count = pl.songs.length;
+      saveLocalPlaylists(localLists);
+    }
     try {
       await api("/api/playlists/" + openPlaylistId + "/songs/" + entryId, { method: "DELETE" });
-      toast("Song removed");
-      openPlaylist(openPlaylistId);
-    } catch (err) { toast(err.message); }
+    } catch (err) {}
+    toast("Song removed");
+    openPlaylist(openPlaylistId);
   }
 
   async function deleteOpenPlaylist() {
     if (!confirm("Delete this playlist?")) return;
+    const localLists = getLocalPlaylists().filter((p) => Number(p.id) !== Number(openPlaylistId));
+    saveLocalPlaylists(localLists);
     try {
       await api("/api/playlists/" + openPlaylistId, { method: "DELETE" });
-      toast("Playlist deleted");
-      await loadPlaylists();
-      loadCategory("home");
-    } catch (err) { toast(err.message); }
+    } catch (err) {}
+    toast("Playlist deleted");
+    await loadPlaylists();
+    loadCategory("home");
   }
 
   // ---------- Modals ----------
@@ -2813,24 +2864,28 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
   $("formCreatePlaylist").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = $("playlistNameInput").value.trim();
+    const description = $("playlistDescInput").value.trim();
     if (!name) return;
+    let created = { id: Date.now(), name, description, song_count: 0, songs: [] };
     try {
-      await api("/api/playlists", jsonOpts("POST", { name, description: $("playlistDescInput").value.trim() }));
-      closeModal("createPlaylistModal");
-      toast("Playlist created");
-      loadPlaylists();
-    } catch (err) { toast(err.message); }
+      const data = await api("/api/playlists", jsonOpts("POST", { name, description }));
+      if (data.playlist) created = { ...data.playlist, songs: [] };
+    } catch (err) {}
+    const localLists = getLocalPlaylists();
+    localLists.unshift(created);
+    saveLocalPlaylists(localLists);
+    closeModal("createPlaylistModal");
+    toast("Playlist created");
+    loadPlaylists();
   });
 
   async function openAddToPlaylist(song) {
     pendingSong = song;
-    try {
-      const data = await api("/api/playlists");
-      const lists = data.playlists || [];
-      if (!lists.length) { toast("Create a playlist first (tap + in the menu)"); return; }
-      $("playlistSelect").innerHTML = lists.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
-      openModal("addToPlaylistModal");
-    } catch (err) { toast(err.message); }
+    await loadPlaylists();
+    const lists = getLocalPlaylists();
+    if (!lists.length) { toast("Create a playlist first (tap + in the menu)"); return; }
+    $("playlistSelect").innerHTML = lists.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+    openModal("addToPlaylistModal");
   }
 
   $("btnCloseAddToPlaylist").addEventListener("click", () => closeModal("addToPlaylistModal"));
@@ -2841,15 +2896,30 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     if (!pendingSong) return;
     const s = pendingSong;
     const id = $("playlistSelect").value;
+    let addedEntry = {
+      id: Date.now(),
+      song_id: s.id, title: s.title, artist: s.artist, album: s.album || "",
+      duration: s.duration || 0, image_url: s.image_url || "", media_url: s.media_url,
+      backup_urls: s.backup_urls || []
+    };
     try {
-      await api("/api/playlists/" + id + "/songs", jsonOpts("POST", {
+      const data = await api("/api/playlists/" + id + "/songs", jsonOpts("POST", {
         song_id: s.id, title: s.title, artist: s.artist, album: s.album || "",
         duration: s.duration || 0, image_url: s.image_url || "", media_url: s.media_url
       }));
-      closeModal("addToPlaylistModal");
-      toast("Added to playlist");
-      loadPlaylists();
-    } catch (err) { toast(err.message); }
+      if (data.song) addedEntry = { ...data.song, backup_urls: s.backup_urls || [] };
+    } catch (err) {}
+    const localLists = getLocalPlaylists();
+    const pl = localLists.find((p) => Number(p.id) === Number(id));
+    if (pl) {
+      if (!Array.isArray(pl.songs)) pl.songs = [];
+      pl.songs.push(addedEntry);
+      pl.song_count = pl.songs.length;
+      saveLocalPlaylists(localLists);
+    }
+    closeModal("addToPlaylistModal");
+    toast("Added to playlist");
+    loadPlaylists();
   });
 
   // ---------- Profile (name & age, no password) ----------
@@ -3102,20 +3172,97 @@ def _err(e, code=500):
 @app.route("/api/search", methods=["GET"])
 def api_search():
     query = request.args.get("q", "").strip()
+    page = int(request.args.get("page", 1) or 1)
     try:
-        results = search_songs(query)
-        return jsonify({"success": True, "query": query, "count": len(results), "songs": results})
+        results = search_songs(query, page=page, limit=40)
+        return jsonify({"success": True, "query": query, "page": page, "count": len(results), "songs": results})
     except Exception as e:
         return _err(e)
 
 
 @app.route("/api/category/<category>", methods=["GET"])
 def api_category(category):
+    page = int(request.args.get("page", 1) or 1)
     try:
-        results = get_category_songs(category)
-        return jsonify({"success": True, "category": category, "count": len(results), "songs": results})
+        results = get_category_songs(category, page=page)
+        return jsonify({"success": True, "category": category, "page": page, "count": len(results), "songs": results})
     except Exception as e:
         return _err(e)
+
+
+# --- Original JioSaavnAPI-master Endpoints ---
+
+@app.route("/song/", methods=["GET"])
+def saavn_search_route():
+    query = request.args.get("query", "").strip()
+    lyrics = str(request.args.get("lyrics", "false")).lower() not in ("false", "0", "")
+    songdata = str(request.args.get("songdata", "true")).lower() == "true"
+    page = int(request.args.get("page", 1) or 1)
+    if not query:
+        return jsonify({"status": False, "error": "Query is required to search songs!"})
+    return jsonify(search_for_song(query, lyrics=lyrics, songdata=songdata, page=page, limit=40))
+
+
+@app.route("/song/get/", methods=["GET"])
+def saavn_get_song_route():
+    song_id = request.args.get("id", "").strip()
+    lyrics = str(request.args.get("lyrics", "false")).lower() not in ("false", "0", "")
+    if not song_id:
+        return jsonify({"status": False, "error": "Song ID is required to get a song!"})
+    resp = get_song(song_id, lyrics=lyrics)
+    if not resp:
+        return jsonify({"status": False, "error": "Invalid Song ID received!"})
+    return jsonify(resp)
+
+
+@app.route("/playlist/", methods=["GET"])
+def saavn_playlist_route():
+    query = request.args.get("query", "").strip()
+    lyrics = str(request.args.get("lyrics", "false")).lower() not in ("false", "0", "")
+    if not query:
+        return jsonify({"status": False, "error": "Query is required to search playlists!"})
+    pid = get_playlist_id(query) if "http" in query else query
+    return jsonify(get_playlist(pid, lyrics=lyrics))
+
+
+@app.route("/album/", methods=["GET"])
+def saavn_album_route():
+    query = request.args.get("query", "").strip()
+    lyrics = str(request.args.get("lyrics", "false")).lower() not in ("false", "0", "")
+    if not query:
+        return jsonify({"status": False, "error": "Query is required to search albums!"})
+    aid = get_album_id(query) if "http" in query else query
+    return jsonify(get_album(aid, lyrics=lyrics))
+
+
+@app.route("/lyrics/", methods=["GET"])
+def saavn_lyrics_route():
+    query = request.args.get("query", "").strip()
+    if not query:
+        return jsonify({"status": False, "error": "Query containing song link or id is required to fetch lyrics!"})
+    sid = get_song_id(query) if ("http" in query and "saavn" in query) else query
+    lyr = get_lyrics(sid)
+    return jsonify({"status": bool(lyr), "lyrics": lyr})
+
+
+@app.route("/result/", methods=["GET"])
+def saavn_result_route():
+    query = request.args.get("query", "").strip()
+    lyrics = str(request.args.get("lyrics", "false")).lower() not in ("false", "0", "")
+    if not query:
+        return jsonify({"status": False, "error": "Query is required!"})
+    if "saavn" not in query:
+        return jsonify(search_for_song(query, lyrics=lyrics, songdata=True, limit=40))
+    if "/song/" in query:
+        sid = get_song_id(query)
+        return jsonify(get_song(sid, lyrics=lyrics))
+    if "/album/" in query:
+        aid = get_album_id(query)
+        return jsonify(get_album(aid, lyrics=lyrics))
+    if "/playlist/" in query or "/featured/" in query:
+        pid = get_playlist_id(query)
+        return jsonify(get_playlist(pid, lyrics=lyrics))
+    return jsonify({"status": False, "error": "Unsupported JioSaavn URL"})
 
 
 # --- Playlists ---
