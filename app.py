@@ -629,86 +629,165 @@ def get_playlist_id(input_url: str) -> Optional[str]:
 
 
 def _clean_track_title(raw_title: str) -> str:
-    """Removes parenthetical movie tags like (From 'Maestro') for higher lyrics match rate."""
+    """Removes parenthetical movie tags like (From 'Maestro') and normalizes title."""
     if not raw_title:
         return ""
-    cleaned = re.sub(r"\s*[\(\[].*?[\)\]]", "", str(raw_title)).strip()
+    cleaned = html.unescape(str(raw_title))
+    cleaned = re.sub(r"\s*[\(\[].*?[\)\]]", "", cleaned).strip()
     cleaned = re.sub(r"\s*-\s*.*$", "", cleaned).strip()
     return cleaned or str(raw_title).strip()
 
 
-def get_lyrics(song_id: str, title: str = "", artist: str = "") -> Optional[str]:
+def _dedup_key(song: Dict[str, Any]) -> str:
+    """Generates a canonical deduplication key from the cleaned song title."""
+    raw_t = song.get("title") or song.get("song") or ""
+    base_t = _clean_track_title(raw_t).lower()
+    base_t = re.sub(r"[^a-z0-9]+", "", base_t)
+    return base_t or str(song.get("id", ""))
+
+
+def _deduplicate_songs(songs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Removes duplicate/repeated songs that share the same ID, media_url, or normalized base title."""
+    unique = []
+    seen_keys = set()
+    seen_ids = set()
+    seen_urls = set()
+    for s in songs:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("id", "")).strip()
+        murl = str(s.get("media_url", "")).strip()
+        dkey = _dedup_key(s)
+        if (sid and sid in seen_ids) or (dkey and dkey in seen_keys) or (murl and murl in seen_urls and murl not in GUARANTEED_STREAMS):
+            continue
+        if sid:
+            seen_ids.add(sid)
+        if dkey:
+            seen_keys.add(dkey)
+        if murl:
+            seen_urls.add(murl)
+        unique.append(s)
+    return unique
+
+
+def _parse_lrc_timestamps(lrc_text: str) -> List[Dict[str, Any]]:
+    """Parses LRC [mm:ss.xx] timestamps into [{'time': float_sec, 'text': str}, ...]."""
+    lines = []
+    pattern = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)")
+    for raw_line in str(lrc_text).splitlines():
+        m = pattern.match(raw_line.strip())
+        if m:
+            mins = int(m.group(1))
+            secs = float(m.group(2))
+            txt = m.group(3).strip()
+            if txt:
+                lines.append({"time": round(mins * 60 + secs, 2), "text": txt})
+    return lines
+
+
+def get_lyrics_payload(song_id: str, title: str = "", artist: str = "", duration: int = 210) -> Dict[str, Any]:
     """
-    Multi-source lyrics resolver:
-    1. Official JioSaavn lyrics.getLyrics
-    2. Public Saavn Mirror (/api/songs/<id>/lyrics)
-    3. LRCLIB synced/plain lyrics search (full query, then cleaned title)
-    4. Lyrics.ovh fallback
+    Fetches voice-synced lyrics (with exact [mm:ss.xx] timestamps from LRCLIB when available)
+    or builds timed vocal lines from JioSaavn / Lyrics.ovh plain lyrics.
     """
-    # 1. Official JioSaavn API
-    if song_id:
+    clean_t = _clean_track_title(title)
+    first_artist = (artist or "").split(",")[0].strip()
+    search_candidates = [q for q in [f"{clean_t} {first_artist}".strip(), clean_t, title] if q]
+
+    # 1. Try LRCLIB first for exact voice-synced LRC timestamps ([mm:ss.xx])
+    plain_fallback = None
+    for cand in search_candidates:
+        try:
+            q_params = urllib.parse.urlencode({"q": cand})
+            lrc_resp = requests.get(f"https://lrclib.net/api/search?{q_params}", headers=REQ_HEADERS, timeout=5)
+            if lrc_resp.status_code == 200:
+                items = lrc_resp.json()
+                if isinstance(items, list) and items:
+                    # First look for a track with syncedLyrics
+                    for item in items:
+                        synced = item.get("syncedLyrics")
+                        if synced and "[" in str(synced):
+                            parsed = _parse_lrc_timestamps(str(synced))
+                            if len(parsed) >= 3:
+                                html_str = "<br>".join([p["text"] for p in parsed])
+                                return {"status": True, "synced": True, "lines": parsed, "lyrics": html_str}
+                        if not plain_fallback and item.get("plainLyrics"):
+                            plain_fallback = str(item["plainLyrics"])
+        except Exception:
+            pass
+
+    # 2. Try Official JioSaavn lyrics.getLyrics
+    raw_plain = plain_fallback
+    if not raw_plain and song_id:
         try:
             url = lyrics_base_url + urllib.parse.quote(str(song_id))
             lyrics_json = requests.get(url, headers=REQ_HEADERS, timeout=4).text
             lyrics_data = json.loads(lyrics_json)
             lyr = lyrics_data.get("lyrics")
             if lyr and len(str(lyr).strip()) > 10:
-                return str(lyr)
+                raw_plain = str(lyr)
         except Exception:
             pass
 
-        # 2. Saavn.dev mirror lyrics
-        try:
-            m_url = f"https://saavn.dev/api/songs/{urllib.parse.quote(str(song_id))}/lyrics"
-            m_resp = requests.get(m_url, headers=REQ_HEADERS, timeout=4)
-            if m_resp.status_code == 200:
-                m_data = m_resp.json()
-                lyr = (m_data.get("data") or {}).get("lyrics") or m_data.get("lyrics")
-                if lyr and len(str(lyr).strip()) > 10:
-                    return str(lyr)
-        except Exception:
-            pass
+        # 3. Try Saavn.dev mirror lyrics
+        if not raw_plain:
+            try:
+                m_url = f"https://saavn.dev/api/songs/{urllib.parse.quote(str(song_id))}/lyrics"
+                m_resp = requests.get(m_url, headers=REQ_HEADERS, timeout=4)
+                if m_resp.status_code == 200:
+                    m_data = m_resp.json()
+                    lyr = (m_data.get("data") or {}).get("lyrics") or m_data.get("lyrics")
+                    if lyr and len(str(lyr).strip()) > 10:
+                        raw_plain = str(lyr)
+            except Exception:
+                pass
 
-    # 3. LRCLIB search (try title + first artist, then cleaned title alone)
-    clean_t = _clean_track_title(title)
-    first_artist = (artist or "").split(",")[0].strip()
-    search_candidates = [q for q in [f"{clean_t} {first_artist}".strip(), clean_t, title] if q]
-
-    for cand in search_candidates:
-        try:
-            q_params = urllib.parse.urlencode({"q": cand})
-            lrc_resp = requests.get(f"https://lrclib.net/api/search?{q_params}", headers=REQ_HEADERS, timeout=4)
-            if lrc_resp.status_code == 200:
-                items = lrc_resp.json()
-                if isinstance(items, list) and items:
-                    for item in items:
-                        plain = item.get("plainLyrics") or item.get("syncedLyrics")
-                        if plain and len(str(plain).strip()) > 15:
-                            # Strip [00:12.34] timestamps if syncedLyrics
-                            text_clean = re.sub(r"\[\d+:\d+(?:\.\d+)?\]\s*", "", str(plain))
-                            return text_clean.strip().replace("\n", "<br>")
-        except Exception:
-            pass
-
-    # 4. Lyrics.ovh fallback
-    if clean_t and first_artist:
+    # 4. Try Lyrics.ovh fallback
+    if not raw_plain and clean_t and first_artist:
         try:
             ovh_url = f"https://api.lyrics.ovh/v1/{urllib.parse.quote(first_artist)}/{urllib.parse.quote(clean_t)}"
             ovh_resp = requests.get(ovh_url, headers=REQ_HEADERS, timeout=4)
             if ovh_resp.status_code == 200:
                 ovh_l = ovh_resp.json().get("lyrics")
                 if ovh_l and len(str(ovh_l).strip()) > 15:
-                    return str(ovh_l).strip().replace("\n", "<br>")
+                    raw_plain = str(ovh_l)
         except Exception:
             pass
 
-    return None
+    if raw_plain:
+        # Convert plain lyrics into voice-timed lines starting after typical 6s intro
+        text_lines = [
+            re.sub(r"<[^>]+>", "", ln).strip()
+            for ln in re.split(r"<br\s*/?>|\r?\n", raw_plain)
+        ]
+        text_lines = [ln for ln in text_lines if ln]
+        dur = max(60, int(duration or 210))
+        intro_offset = min(8.0, dur * 0.05)
+        usable_span = max(30.0, dur - intro_offset - 8.0)
+        step = usable_span / max(1, len(text_lines))
+        timed_lines = [
+            {"time": round(intro_offset + i * step, 2), "text": ln}
+            for i, ln in enumerate(text_lines)
+        ]
+        return {
+            "status": True,
+            "synced": False,
+            "lines": timed_lines,
+            "lyrics": "<br>".join(text_lines)
+        }
+
+    return {"status": False, "synced": False, "lines": [], "lyrics": None}
+
+
+def get_lyrics(song_id: str, title: str = "", artist: str = "") -> Optional[str]:
+    payload = get_lyrics_payload(song_id, title=title, artist=artist)
+    return payload.get("lyrics")
 
 
 def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 40) -> Any:
     """
     Searches JioSaavn using both search.getResults (paginated, up to 40 songs per page)
-    and autocomplete.get + song.getDetails from JioSaavnAPI-master.
+    and autocomplete.get + song.getDetails from JioSaavnAPI-master, with strict deduplication.
     """
     clean_q = query.strip()
     if clean_q.startswith("http") and "saavn.com" in clean_q:
@@ -717,7 +796,7 @@ def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, pag
 
     collected_ids = []
 
-    # 1. Paginated search.getResults (returns up to 40 song IDs per page!)
+    # 1. Paginated search.getResults
     try:
         sr_url = f"{search_results_base_url}&n={limit}&p={page}&q={urllib.parse.quote(clean_q)}"
         sr_resp = requests.get(sr_url, headers=REQ_HEADERS, timeout=6)
@@ -731,7 +810,7 @@ def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, pag
     except Exception as e:
         logger.debug(f"search.getResults error: {e}")
 
-    # 2. Also query autocomplete.get from JioSaavnAPI-master on page 1
+    # 2. Autocomplete fallback on page 1
     if page == 1 and len(collected_ids) < 15:
         try:
             ac_url = search_base_url + urllib.parse.quote(clean_q)
@@ -750,13 +829,13 @@ def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, pag
     if collected_ids:
         songs = get_songs_batch(collected_ids, lyrics=lyrics)
         if songs:
-            return songs
+            return _deduplicate_songs(songs)
 
     return []
 
 
 def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
-    """Fallback to public JioSaavn mirrors if direct jiosaavn.com is geo-blocked."""
+    """Fallback to public JioSaavn mirrors with strict deduplication."""
     for mirror in SAAVN_MIRRORS:
         url = f"{mirror}/search/songs?query={urllib.parse.quote(query)}&page={page}&limit={limit}"
         try:
@@ -808,34 +887,26 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Di
                         "backup_urls": urls
                     })
                 if results:
-                    return results
+                    return _deduplicate_songs(results)
         except Exception:
             pass
     return []
 
 
 def search_songs(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
-    """
-    Main search entrypoint for Musify:
-    1. Official JioSaavnAPI-master engine (search.getResults + autocomplete.get + song.getDetails + pyDes)
-    2. Public JioSaavn Mirrors (with pagination)
-    3. Fallback catalog
-    """
     clean_q = query.strip()
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    # Tier 1: JioSaavnAPI-master direct engine
     saavn_songs = search_for_song(clean_q, lyrics=False, songdata=True, page=page, limit=limit)
     if isinstance(saavn_songs, list) and saavn_songs:
-        return saavn_songs
+        return _deduplicate_songs(saavn_songs)
     elif isinstance(saavn_songs, dict) and saavn_songs.get("media_url"):
         return [saavn_songs]
 
-    # Tier 2: Public JioSaavn Mirrors
     mirror_songs = _search_saavn_mirrors(clean_q, page=page, limit=limit)
     if mirror_songs:
-        return mirror_songs
+        return _deduplicate_songs(mirror_songs)
 
     return FALLBACK_CATALOG
 
@@ -843,7 +914,7 @@ def search_songs(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, A
 def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     """
     Prioritizes Telugu songs first on Home/All, Telugu, Melodies, and Trending tabs,
-    fetching 40+ Telugu tracks per page from JioSaavn.
+    with strict deduplication so no song appears twice.
     """
     cat = category.lower().strip()
     category_queries = {
@@ -892,23 +963,15 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     selected_q = queries[(page - 1) % len(queries)]
     sub_page = ((page - 1) // len(queries)) + 1
 
-    # On page 1 of 'home', combine the top 2 Telugu queries so the 8 quick tiles,
-    # 'It's New Music Friday!', 'Jump back in', and 'Recommended for today' are packed with Telugu hits
     if cat in ("home", "all", "") and page == 1:
-        part1 = search_songs(queries[0], page=1, limit=25)
-        part2 = search_songs(queries[1], page=1, limit=25)
-        combined = []
-        seen_ids = set()
-        for s in (part1 + part2):
-            sid = s.get("id") or s.get("title")
-            if sid not in seen_ids:
-                seen_ids.add(sid)
-                combined.append(s)
+        part1 = search_songs(queries[0], page=1, limit=30)
+        part2 = search_songs(queries[1], page=1, limit=30)
+        combined = _deduplicate_songs(part1 + part2)
         if combined:
             return combined
 
     results = search_songs(selected_q, page=sub_page, limit=40)
-    return results if results else FALLBACK_CATALOG
+    return _deduplicate_songs(results) if results else FALLBACK_CATALOG
 
 
 # =====================================================================
@@ -954,7 +1017,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=9">
+  <link rel="stylesheet" href="/static/css/style.css?v=10">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1375,20 +1438,20 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/player.js?v=9"></script>
-  <script src="/static/js/app.js?v=9"></script>
+  <script src="/static/js/player.js?v=10"></script>
+  <script src="/static/js/app.js?v=10"></script>
   <script>
     // Force-clear any old desktop cached assets from previous service workers
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-compact-stage-v9") caches.delete(k);
+          if (k !== "musify-synced-lyrics-v10") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=9").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=10").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -2369,18 +2432,44 @@ html, body {
 }
 
 .np-lyrics-body {
-  font-size: 21px;
+  font-size: 20px;
   font-weight: 800;
   line-height: 1.55;
-  color: rgba(255, 255, 255, 0.88);
-  max-height: 240px;
-  overflow: hidden;
+  color: rgba(255, 255, 255, 0.35);
+  max-height: 250px;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  padding: 8px 4px;
   transition: max-height 0.35s ease;
+  scrollbar-width: none;
+}
+
+.np-lyrics-body::-webkit-scrollbar {
+  display: none;
 }
 
 .np-lyrics-body.expanded {
-  max-height: 2200px;
-  overflow-y: auto;
+  max-height: 68vh;
+}
+
+.lyric-line {
+  padding: 7px 6px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.34);
+  transition: color 0.22s ease, transform 0.22s ease, text-shadow 0.22s ease;
+  cursor: pointer;
+  transform-origin: left center;
+}
+
+.lyric-line.past {
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.lyric-line.active {
+  color: #ffffff;
+  transform: scale(1.03);
+  text-shadow: 0 2px 14px rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .np-show-lyrics-pill {
@@ -2969,57 +3058,110 @@ PLAYER_JS = r'''/* =============================================================
     if (p && p.catch) p.catch(() => {});
   }
 
-  // ---- Lyrics Resolver + Live Floating Lyric Sync ----
+  // ---- Voice-Synced Karaoke Lyrics Resolver & Auto-Highlighter ----
+  state.activeLyricIdx = -1;
+
+  function renderTimedLyricsDOM(lines) {
+    const box = $("lyricsContent");
+    if (!box) return;
+    state.lyricLines = lines;
+    state.activeLyricIdx = -1;
+    box.innerHTML = lines.map((item, idx) =>
+      `<div class="lyric-line" data-idx="${idx}" data-time="${item.time}">${esc(item.text)}</div>`
+    ).join("");
+
+    // Tap any lyric line to seek the song directly to that vocal line!
+    box.querySelectorAll(".lyric-line").forEach((el) => {
+      el.addEventListener("click", () => {
+        const t = parseFloat(el.getAttribute("data-time") || "0");
+        if (!isNaN(t) && audio.duration) {
+          audio.currentTime = Math.min(audio.duration - 0.5, Math.max(0, t));
+          if (audio.paused) audio.play().catch(() => {});
+        }
+      });
+    });
+  }
+
+  function syncLyricsToTime(currentTimeSec) {
+    const lines = state.lyricLines;
+    if (!lines || !lines.length) return;
+
+    let activeIdx = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (currentTimeSec >= lines[i].time) {
+        activeIdx = i;
+      } else {
+        break;
+      }
+    }
+
+    if (activeIdx === state.activeLyricIdx) return;
+    state.activeLyricIdx = activeIdx;
+
+    if ($("npFloatingLyric") && lines[activeIdx]) {
+      $("npFloatingLyric").textContent = "♪ " + lines[activeIdx].text;
+    }
+
+    const box = $("lyricsContent");
+    if (!box) return;
+    const domLines = box.querySelectorAll(".lyric-line");
+    domLines.forEach((el, idx) => {
+      el.classList.toggle("active", idx === activeIdx);
+      el.classList.toggle("past", idx < activeIdx);
+    });
+
+    const activeEl = domLines[activeIdx];
+    if (activeEl && box.scrollHeight > box.clientHeight) {
+      const targetTop = activeEl.offsetTop - box.clientHeight / 2 + activeEl.clientHeight / 2;
+      box.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+    }
+  }
+
   async function loadLyricsForCurrent() {
     const s = current();
     const box = $("lyricsContent");
     const floatingEl = $("npFloatingLyric");
     if (!s || !box) return;
 
-    box.innerHTML = '<div style="opacity:0.75;font-size:17px;">Loading lyrics for "' + esc(s.title) + '"...</div>';
+    box.innerHTML = '<div style="color:rgba(255,255,255,0.7);font-size:16px;">Syncing voice lyrics for "' + esc(s.title) + '"...</div>';
     if (floatingEl) floatingEl.textContent = "♪ " + s.title + " • " + s.artist;
 
-    let rawLyrics = s.lyrics || "";
-    if (!rawLyrics) {
-      try {
-        const params = new URLSearchParams({
-          id: s.id || "",
-          title: s.title || "",
-          artist: s.artist || ""
-        });
-        const res = await fetch("/api/lyrics?" + params.toString());
-        const data = await res.json();
-        if (data.status && data.lyrics) {
-          rawLyrics = data.lyrics;
-          s.lyrics = rawLyrics;
-        }
-      } catch (e) {}
+    if (Array.isArray(s.timedLyrics) && s.timedLyrics.length) {
+      renderTimedLyricsDOM(s.timedLyrics);
+      syncLyricsToTime(audio.currentTime || 0);
+      return;
     }
 
-    if (!rawLyrics) {
-      // Build stylized Spotify-like rhythmic lyric preview lines so card is never blank
-      const hook = s.title || "Melody";
-      const artistName = (s.artist || "Artist").split(",")[0];
-      rawLyrics = [
-        "(♪ " + esc(hook) + " — Instrumental Intro ♪)",
-        "Feel the rhythm of " + esc(hook),
-        "Voices by " + esc(artistName),
-        "From the album " + esc(s.album || hook),
-        "(♪ Melodic chorus & groove ♪)",
-        esc(hook) + " — streaming live in HD",
-        "Swipe left for next track • Swipe right for previous"
-      ].join("<br><br>");
-    }
+    try {
+      const params = new URLSearchParams({
+        id: s.id || "",
+        title: s.title || "",
+        artist: s.artist || "",
+        duration: String(s.duration || Math.round(audio.duration || 210))
+      });
+      const res = await fetch("/api/lyrics?" + params.toString());
+      const data = await res.json();
+      if (data.status && Array.isArray(data.lines) && data.lines.length) {
+        s.timedLyrics = data.lines;
+        renderTimedLyricsDOM(data.lines);
+        syncLyricsToTime(audio.currentTime || 0);
+        return;
+      }
+    } catch (e) {}
 
-    box.innerHTML = rawLyrics;
-    state.lyricLines = rawLyrics
-      .split(/<br\s*\/?>|\n/i)
-      .map((l) => l.replace(/<[^>]+>/g, "").trim())
-      .filter((l) => l.length > 0);
-
-    if (floatingEl && state.lyricLines.length > 0) {
-      floatingEl.textContent = state.lyricLines[0];
-    }
+    // Fallback timed lines if no external lyrics exist
+    const hook = s.title || "Melody";
+    const artistName = (s.artist || "Artist").split(",")[0];
+    const fallbackLines = [
+      { time: 0, text: "♪ " + hook + " (Instrumental Intro)" },
+      { time: 12, text: hook + " — Vocals by " + artistName },
+      { time: 28, text: "From the album " + (s.album || hook) },
+      { time: 48, text: "♪ Melodic verse & chorus ♪" },
+      { time: 90, text: hook + " • " + artistName }
+    ];
+    s.timedLyrics = fallbackLines;
+    renderTimedLyricsDOM(fallbackLines);
+    syncLyricsToTime(audio.currentTime || 0);
   }
 
   // ---- Artist Info, Explore Cards & Credits (Screenshots 3 & 4) ----
@@ -3308,14 +3450,8 @@ PLAYER_JS = r'''/* =============================================================
       if ($("miniProgressFill")) $("miniProgressFill").style.width = pct + "%";
       if ($("currentTime")) $("currentTime").textContent = fmt(audio.currentTime);
 
-      // Update floating lyric line on video proportional to playback progress
-      if (state.lyricLines.length > 0 && $("npFloatingLyric")) {
-        const lineIdx = Math.min(
-          state.lyricLines.length - 1,
-          Math.floor((audio.currentTime / audio.duration) * state.lyricLines.length)
-        );
-        $("npFloatingLyric").textContent = state.lyricLines[lineIdx];
-      }
+      // Highlight exact voice-synced lyric line & auto-scroll lyrics card
+      syncLyricsToTime(audio.currentTime);
     }
   });
 
@@ -3568,8 +3704,26 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     }
   });
 
+  function normalizeSongKey(s) {
+    const raw = String((s && (s.title || s.song)) || "").toLowerCase();
+    return raw.replace(/\s*[\(\[].*?[\)\]]/g, "").replace(/\s*-\s*.*$/, "").replace(/[^a-z0-9]+/g, "") || String(s.id || "");
+  }
+
+  function deduplicateClientSongs(list) {
+    const seen = new Set();
+    const out = [];
+    (list || []).forEach((s) => {
+      if (!s) return;
+      const k = normalizeSongKey(s);
+      if (k && seen.has(k)) return;
+      if (k) seen.add(k);
+      out.push(s);
+    });
+    return out;
+  }
+
   function renderSongs(songs, append, hideLoadMore) {
-    currentSongs = append ? currentSongs.concat(songs) : songs;
+    currentSongs = deduplicateClientSongs(append ? currentSongs.concat(songs) : songs);
     if (!append && currentCategory === "home" && !activeSearchQuery && !openPlaylistId) {
       renderHomeHeroSections(currentSongs);
     }
@@ -3578,7 +3732,9 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
       return;
     }
     const cur = window.Player.currentSong();
+    const isHomeDefault = (currentCategory === "home" && !activeSearchQuery && !openPlaylistId && currentSongs.length > 10);
     $("content").innerHTML = '<div class="cards-grid">' + currentSongs.map((s, i) => {
+      if (isHomeDefault && i < 8) return "";
       const playing = Boolean(cur && cur.title === s.title);
       const liked = isSongLiked(s);
       return `
@@ -3963,7 +4119,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-compact-stage-v9";
+SW_JS = r'''const CACHE = "musify-synced-lyrics-v10";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
@@ -4217,11 +4373,12 @@ def saavn_lyrics_route():
     query = (request.args.get("query") or request.args.get("id") or "").strip()
     title = request.args.get("title", "").strip()
     artist = request.args.get("artist", "").strip()
+    duration = int(request.args.get("duration", 210) or 210)
     if not query and not title:
         return jsonify({"status": False, "error": "Song ID or title is required to fetch lyrics!"})
     sid = get_song_id(query) if ("http" in query and "saavn" in query) else query
-    lyr = get_lyrics(sid, title=title, artist=artist)
-    return jsonify({"status": bool(lyr), "lyrics": lyr})
+    payload = get_lyrics_payload(sid, title=title, artist=artist, duration=duration)
+    return jsonify(payload)
 
 
 @app.route("/result/", methods=["GET"])
