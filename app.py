@@ -927,20 +927,25 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta id="vpMeta" name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <script>
-    // If mobile browser has "Desktop site" enabled (reporting width >= 800 on a touch screen),
-    // automatically zoom/scale the document to fill 100% of the physical mobile screen!
+    // Accurately size both width and height (--vh-full) whether Mobile or "Desktop site" mode is active
     (function() {
-      function enforceMobileScale() {
+      function syncViewportVars() {
         var isTouch = ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
-        if (isTouch && window.innerWidth >= 700 && screen.width < 600) {
-          var scale = (window.innerWidth / screen.width).toFixed(2);
-          document.documentElement.style.zoom = scale;
+        var scale = 1;
+        if (isTouch && window.innerWidth >= 700 && screen.width > 200 && screen.width < 600) {
+          scale = window.innerWidth / screen.width;
+          document.documentElement.style.zoom = scale.toFixed(3);
         } else {
           document.documentElement.style.zoom = "";
         }
+        var trueHeight = Math.round(window.innerHeight / scale);
+        document.documentElement.style.setProperty("--vh-full", trueHeight + "px");
+        document.documentElement.style.setProperty("--stage-h", Math.round(trueHeight * 0.88) + "px");
       }
-      window.addEventListener("resize", enforceMobileScale);
-      enforceMobileScale();
+      window.addEventListener("resize", syncViewportVars);
+      window.addEventListener("orientationchange", syncViewportVars);
+      syncViewportVars();
+      document.addEventListener("DOMContentLoaded", syncViewportVars);
     })();
   </script>
   <meta name="theme-color" content="#000000">
@@ -949,7 +954,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=8">
+  <link rel="stylesheet" href="/static/css/style.css?v=9">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1115,8 +1120,8 @@ INDEX_HTML = r'''<!DOCTYPE html>
         </button>
       </div>
 
-      <!-- Swipe Hint Pill -->
-      <div id="npSwipeIndicator" class="np-swipe-indicator">⬅ Swipe Left: Next Song • Swipe Right: Previous ➡</div>
+      <!-- Clean video stage (no middle banner blocking the video) -->
+      <div id="npSwipeIndicator" style="display:none;"></div>
 
       <!-- Bottom Overlay on Video Stage (Live Floating Lyric + Track Info + Controls) -->
       <div class="np-stage-bottom">
@@ -1370,20 +1375,20 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/player.js?v=8"></script>
-  <script src="/static/js/app.js?v=8"></script>
+  <script src="/static/js/player.js?v=9"></script>
+  <script src="/static/js/app.js?v=9"></script>
   <script>
     // Force-clear any old desktop cached assets from previous service workers
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-telugu-first-v8") caches.delete(k);
+          if (k !== "musify-compact-stage-v9") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=8").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=9").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -1428,7 +1433,7 @@ body {
   background-color: var(--bg-black);
   color: var(--text-main);
   overflow: hidden;
-  height: 100vh;
+  height: var(--vh-full, 100dvh);
   display: flex;
   flex-direction: column;
   user-select: none;
@@ -1437,7 +1442,7 @@ body {
 .app-container {
   display: flex;
   flex: 1;
-  height: calc(100vh - 58px);
+  height: calc(var(--vh-full, 100dvh) - 56px);
   position: relative;
   overflow: hidden;
 }
@@ -2084,7 +2089,8 @@ html, body {
 .np-video-stage {
   position: relative;
   width: 100%;
-  min-height: 92vh;
+  height: var(--stage-h, 86dvh);
+  max-height: var(--stage-h, 86dvh);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -2115,7 +2121,7 @@ html, body {
 
 @keyframes kenBurnsZoom {
   0% { transform: scale(1) translate(0, 0); }
-  100% { transform: scale(1.18) translate(-2%, -2%); }
+  100% { transform: scale(1.04) translate(0, 0); }
 }
 
 .np-video-gradient {
@@ -2182,46 +2188,49 @@ html, body {
 .np-stage-bottom {
   position: relative;
   z-index: 5;
-  padding: 16px 22px 24px 22px;
+  padding: 10px 18px 14px 18px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  max-width: 560px;
-  margin: 0 auto;
+  gap: 10px;
   width: 100%;
 }
 
 /* Floating Lyric Line on Video (Screenshot 70502.jpg) */
 .np-floating-lyric {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 800;
   color: #ffffff;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
-  min-height: 26px;
+  min-height: 20px;
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .np-track-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .np-track-thumb {
-  width: 50px;
-  height: 50px;
+  width: 44px;
+  height: 44px;
   border-radius: 6px;
   object-fit: cover;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+  flex-shrink: 0;
 }
 
 .np-track-text {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
 .np-track-title {
-  font-size: 21px;
+  font-size: 18px;
   font-weight: 800;
   color: #ffffff;
   white-space: nowrap;
@@ -3954,7 +3963,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-telugu-first-v8";
+SW_JS = r'''const CACHE = "musify-compact-stage-v9";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
