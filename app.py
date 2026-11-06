@@ -879,7 +879,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/style.css?v=6">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1300,12 +1300,20 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/player.js"></script>
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/player.js?v=6"></script>
+  <script src="/static/js/app.js?v=6"></script>
   <script>
+    // Force-clear any old desktop cached assets from previous service workers
+    if ("caches" in window) {
+      caches.keys().then((keys) => {
+        keys.forEach((k) => {
+          if (k !== "musify-mobile-only-v6") caches.delete(k);
+        });
+      }).catch(() => {});
+    }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js").catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=6").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -1364,15 +1372,35 @@ body {
   overflow: hidden;
 }
 
-/* --- Sidebar --- */
+/* --- Always Mobile App Layout (Even if Browser 'Desktop Site' is Checked) --- */
+.app-container {
+  max-width: 520px;
+  width: 100%;
+  margin: 0 auto;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.9);
+}
+
+/* Sidebar is ALWAYS a hidden slide-over mobile drawer (never a fixed desktop sidebar) */
 .sidebar {
-  width: var(--sidebar-width);
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 58px;
+  width: 280px;
+  max-width: 82vw;
   background-color: var(--bg-black);
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 8px;
-  flex-shrink: 0;
+  z-index: 75;
+  transform: translateX(-105%);
+  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
+  box-shadow: 10px 0 30px rgba(0, 0, 0, 0.85);
+}
+
+.sidebar.mobile-open {
+  transform: translateX(0);
 }
 
 .spotify-box {
@@ -2693,26 +2721,22 @@ body {
   box-shadow: 0 6px 20px rgba(0,0,0,0.6);
 }
 
-@media (max-width: 768px) {
-  .sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 58px;
-    z-index: 70;
-    transform: translateX(-100%);
-    transition: transform 0.28s ease;
-  }
-
-  .sidebar.mobile-open {
-    transform: translateX(0);
-  }
+/* Keep mini-player and bottom nav aligned to the mobile app frame on all screens */
+.mini-player {
+  max-width: 504px;
+  margin: 0 auto;
+  left: 8px;
+  right: 8px;
 }
 
-@media (min-width: 769px) {
-  .mini-player {
-    left: calc(var(--sidebar-width) + 16px);
-  }
+.mobile-bottom-nav {
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.cards-grid {
+  grid-template-columns: repeat(2, 1fr) !important;
+  gap: 12px;
 }
 '''
 
@@ -3836,7 +3860,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-spotify-canvas-v5";
+SW_JS = r'''const CACHE = "musify-mobile-only-v6";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
@@ -3983,9 +4007,15 @@ except Exception as e:
     print(f"DB init warning: {e}")
 
 
+def _no_cache(resp: Response) -> Response:
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
+
+
 @app.route("/")
 def index():
-    return Response(INDEX_HTML, mimetype="text/html")
+    return _no_cache(Response(INDEX_HTML, mimetype="text/html"))
 
 
 @app.route("/static/<path:filename>")
@@ -3993,17 +4023,17 @@ def serve_static(filename):
     item = STATIC_FILES.get(filename)
     if not item:
         abort(404)
-    return Response(item[0], mimetype=item[1])
+    return _no_cache(Response(item[0], mimetype=item[1]))
 
 
 @app.route("/manifest.json")
 def serve_manifest():
-    return Response(MANIFEST_JSON, mimetype="application/manifest+json")
+    return _no_cache(Response(MANIFEST_JSON, mimetype="application/manifest+json"))
 
 
 @app.route("/sw.js")
 def serve_sw():
-    return Response(SW_JS, mimetype="application/javascript")
+    return _no_cache(Response(SW_JS, mimetype="application/javascript"))
 
 
 def _err(e, code=500):
