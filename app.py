@@ -627,14 +627,34 @@ def get_playlist_id(input_url: str) -> Optional[str]:
         return None
 
 
-def get_lyrics(song_id: str) -> Optional[str]:
-    try:
-        url = lyrics_base_url + urllib.parse.quote(str(song_id))
-        lyrics_json = requests.get(url, headers=REQ_HEADERS, timeout=5).text
-        lyrics_text = json.loads(lyrics_json)
-        return lyrics_text.get("lyrics")
-    except Exception:
-        return None
+def get_lyrics(song_id: str, title: str = "", artist: str = "") -> Optional[str]:
+    """Fetches lyrics from JioSaavnAPI-master endpoint first, then falls back to LRCLIB API."""
+    if song_id:
+        try:
+            url = lyrics_base_url + urllib.parse.quote(str(song_id))
+            lyrics_json = requests.get(url, headers=REQ_HEADERS, timeout=5).text
+            lyrics_data = json.loads(lyrics_json)
+            lyr = lyrics_data.get("lyrics")
+            if lyr and len(str(lyr).strip()) > 10:
+                return str(lyr)
+        except Exception:
+            pass
+
+    # Fallback: Query LRCLIB by title & artist for synced/plain lyrics
+    if title:
+        try:
+            q_params = urllib.parse.urlencode({"q": f"{title} {artist}".strip()})
+            lrc_resp = requests.get(f"https://lrclib.net/api/search?{q_params}", headers=REQ_HEADERS, timeout=5)
+            if lrc_resp.status_code == 200:
+                items = lrc_resp.json()
+                if isinstance(items, list) and items:
+                    best = items[0]
+                    plain = best.get("plainLyrics") or best.get("syncedLyrics")
+                    if plain:
+                        return str(plain).replace("\n", "<br>")
+        except Exception:
+            pass
+    return None
 
 
 def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 40) -> Any:
@@ -792,7 +812,7 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
 
 
 # =====================================================================
-# PART 3 - WEB PAGE FILES (HTML, CSS, JS, manifest, service worker)
+# PART 3 - SPOTIFY UI, LYRICS PANEL & FULL AUDIO ENGINE (HTML, CSS, JS)
 # =====================================================================
 
 INDEX_HTML = r'''<!DOCTYPE html>
@@ -800,109 +820,183 @@ INDEX_HTML = r'''<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#0f0f13">
+  <meta name="theme-color" content="#000000">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-  <title>Musify - Stream Music & Create Playlists</title>
+  <title>Musify • Spotify Edition</title>
   <link rel="stylesheet" href="/static/css/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2322c55e'><circle cx='12' cy='12' r='10'/><polygon points='10 8 16 12 10 16 10 8' fill='%23ffffff'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
 
-  <!-- Audio Element (Direct Streaming) -->
-  <audio id="audio" preload="metadata"></audio>
+  <!-- Hidden HTML5 Audio Streamer -->
+  <audio id="audio" preload="metadata" crossorigin="anonymous"></audio>
 
-  <!-- App Wrapper -->
+  <!-- Spotify 2-Panel Desktop / Full-Screen Mobile Layout -->
   <div class="app-container">
 
-    <!-- Left Sidebar -->
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-icon">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
+    <!-- Left Sidebar (Spotify Navigation + Your Library) -->
+    <aside class="sidebar" id="sidebar">
+      <!-- Top Nav Box -->
+      <div class="spotify-box nav-box">
+        <div class="brand">
+          <div class="brand-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#000">
+              <polygon points="6 4 20 12 6 20 6 4"/>
+            </svg>
+          </div>
+          <div class="brand-name">Musify</div>
+          <span class="pro-pill">FREE</span>
         </div>
-        <div class="brand-name">Musify</div>
+
+        <nav class="nav-section">
+          <a class="nav-link active" id="navHome" onclick="loadCategory('home')">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            <span>Home</span>
+          </a>
+          <a class="nav-link" id="navSearch" onclick="focusSearchInput()">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span>Search</span>
+          </a>
+          <a class="nav-link" id="navLiked" onclick="openLikedSongs()">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#1db954" stroke="#1db954" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            <span>Liked Songs</span>
+            <span id="likedCountBadge" class="song-badge">0</span>
+          </a>
+        </nav>
       </div>
 
-      <!-- Passwordless User Profile Card (Name & Age) -->
-      <div id="userProfileCard" class="user-profile-card" onclick="openProfileModal()" title="Tap to edit Name & Age">
-        <div id="userAvatar" class="user-avatar">M</div>
-        <div class="user-profile-info">
-          <div id="userNameDisplay" class="user-name-display">Guest Listener</div>
-          <div id="userAgeDisplay" class="user-age-display">Tap to set Name & Age</div>
+      <!-- Bottom Library Box -->
+      <div class="spotify-box library-box">
+        <div class="playlist-header">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            <span>Your Library</span>
+          </div>
+          <button id="btnNewPlaylist" class="btn-icon-small" title="Create New Playlist">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
         </div>
-      </div>
 
-      <nav class="nav-section">
-        <a class="nav-link active" onclick="loadCategory('home')">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-          Home
-        </a>
-        <a class="nav-link" onclick="document.getElementById('query').focus()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          Search
-        </a>
-      </nav>
+        <!-- Passwordless User Profile Card (Name & Age) -->
+        <div id="userProfileCard" class="user-profile-card" onclick="openProfileModal()" title="Tap to edit Name & Age">
+          <div id="userAvatar" class="user-avatar">M</div>
+          <div class="user-profile-info">
+            <div id="userNameDisplay" class="user-name-display">Guest Listener</div>
+            <div id="userAgeDisplay" class="user-age-display">Tap to set Name & Age</div>
+          </div>
+        </div>
 
-      <div class="sidebar-divider"></div>
-
-      <div class="playlist-header">
-        <span>Playlists</span>
-        <button id="btnNewPlaylist" class="btn-icon-small" title="Create Playlist">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </button>
-      </div>
-
-      <!-- User Playlists Container -->
-      <div id="sidebarPlaylists" class="sidebar-playlists">
-        <!-- Injected via JavaScript -->
+        <!-- User Playlists Container -->
+        <div id="sidebarPlaylists" class="sidebar-playlists"></div>
       </div>
     </aside>
 
-    <!-- Main Content Area -->
-    <main class="main-area">
+    <!-- Main Spotify Rounded View -->
+    <main class="main-area" id="mainArea">
 
-      <!-- Top Bar: Search & Languages -->
+      <!-- Top Sticky Header -->
       <header class="top-bar">
-        <button id="btnMobileMenu" class="mobile-menu-btn" title="Open Playlists & Menu">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        <button id="btnMobileMenu" class="mobile-menu-btn" title="Open Library">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
+
         <div class="search-box">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="query" placeholder="Search songs, artists, or albums..." autocomplete="off">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="query" placeholder="What do you want to play?" autocomplete="off">
         </div>
 
         <div class="category-pills">
-          <button class="pill-btn active" data-category="home">Home</button>
+          <button class="pill-btn active" data-category="home">All</button>
           <button class="pill-btn" data-category="telugu">Telugu</button>
           <button class="pill-btn" data-category="hindi">Hindi</button>
           <button class="pill-btn" data-category="english">English</button>
           <button class="pill-btn" data-category="punjabi">Punjabi</button>
+          <button class="pill-btn" data-category="trending">Trending</button>
         </div>
       </header>
 
-      <!-- Scrollable Main View -->
-      <section class="content-scroll">
-        <div class="view-header">
-          <h1 id="heading" class="view-heading">Trending Now</h1>
-          <p id="subheading" class="view-subheading">Streaming live from high-speed music CDNs</p>
+      <!-- Scrollable Main Content -->
+      <section class="content-scroll" id="contentScroll">
+        <!-- Quick 6-Tile Spotify Greeting Row -->
+        <div id="quickTilesSection" class="quick-tiles-section">
+          <h2 id="greetingTitle" class="greeting-title">Good Evening</h2>
+          <div class="quick-tiles-grid">
+            <div class="quick-tile" onclick="loadCategory('telugu')">
+              <img src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80" alt="Telugu">
+              <span>Telugu Blockbusters</span>
+              <span class="tile-play"><svg width="14" height="14" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg></span>
+            </div>
+            <div class="quick-tile" onclick="loadCategory('hindi')">
+              <img src="https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=200&auto=format&fit=crop&q=80" alt="Hindi">
+              <span>Bollywood Top 50</span>
+              <span class="tile-play"><svg width="14" height="14" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg></span>
+            </div>
+            <div class="quick-tile" onclick="loadCategory('english')">
+              <img src="https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=200&auto=format&fit=crop&q=80" alt="English">
+              <span>Global English Hits</span>
+              <span class="tile-play"><svg width="14" height="14" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg></span>
+            </div>
+            <div class="quick-tile" onclick="loadCategory('punjabi')">
+              <img src="https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=200&auto=format&fit=crop&q=80" alt="Punjabi">
+              <span>Punjabi Party Anthems</span>
+              <span class="tile-play"><svg width="14" height="14" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg></span>
+            </div>
+            <div class="quick-tile" onclick="openLikedSongs()">
+              <div class="liked-tile-icon">♥</div>
+              <span>Liked Songs</span>
+              <span class="tile-play"><svg width="14" height="14" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg></span>
+            </div>
+            <div class="quick-tile" onclick="loadCategory('trending')">
+              <img src="https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=200&auto=format&fit=crop&q=80" alt="Trending">
+              <span>Viral India Hits</span>
+              <span class="tile-play"><svg width="14" height="14" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg></span>
+            </div>
+          </div>
         </div>
 
-        <!-- Dynamic Content Injected Here -->
+        <div class="view-header">
+          <h1 id="heading" class="view-heading">Trending Now</h1>
+          <p id="subheading" class="view-subheading">Tap any song to play immediately or use Next/Prev to switch tracks</p>
+        </div>
+
+        <!-- Dynamic Song Grid / Playlist View -->
         <div id="content"></div>
       </section>
 
-      <!-- Lyrics / Info Box (Optional Overlay/Toggle) -->
-      <div id="lyricsBox" class="hidden"></div>
+      <!-- Spotify Full-Screen / Slide-Over Lyrics & Now Playing Panel -->
+      <div id="lyricsBox" class="lyrics-panel">
+        <div class="lyrics-top-bar">
+          <div class="lyrics-song-meta">
+            <img id="lyricsThumb" src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80" alt="">
+            <div>
+              <div id="lyricsSongTitle" class="lyrics-song-title">No Song Playing</div>
+              <div id="lyricsSongArtist" class="lyrics-song-artist">Pick a track to view lyrics</div>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <button class="ctrl-btn" onclick="window.Player.prev()" title="Previous Song">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2.2"/></svg>
+            </button>
+            <button class="ctrl-btn" onclick="window.Player.next()" title="Next Song">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2.2"/></svg>
+            </button>
+            <button id="btnCloseLyrics" class="btn-icon-small" title="Close Lyrics">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="lyricsContent" class="lyrics-content">
+          Select and play any song to view live lyrics here.
+        </div>
+      </div>
 
       <!-- Slide-Over Queue Drawer -->
       <div id="queuePanel" class="queue-panel">
         <div class="queue-header">
-          <h3>Playback Queue</h3>
+          <h3>Queue • Up Next</h3>
           <div style="display:flex; gap:8px;">
             <button id="btnClearQueue" class="btn-icon-small" title="Clear Queue">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -912,90 +1006,122 @@ INDEX_HTML = r'''<!DOCTYPE html>
             </button>
           </div>
         </div>
-        <div id="queueList" class="queue-list">
-          <!-- Populated by player.js -->
-        </div>
+        <div id="queueList" class="queue-list"></div>
       </div>
 
     </main>
   </div>
 
-  <!-- Bottom Persistent Audio Player -->
+  <!-- Spotify Bottom Persistent Player Bar -->
   <footer class="bottom-player">
-    <!-- Left: Now Playing Info -->
+    <!-- Left: Now Playing Info + Like Heart -->
     <div class="player-left">
-      <img id="playerImg" class="player-thumb" src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&auto=format&fit=crop&q=80" alt="Album Cover">
-      <div class="player-track-info">
+      <img id="playerImg" class="player-thumb" src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&auto=format&fit=crop&q=80" alt="Album Cover" onclick="toggleLyricsPanel()">
+      <div class="player-track-info" onclick="toggleLyricsPanel()">
         <div id="playerTitle" class="player-title">No song playing</div>
-        <div id="playerArtist" class="player-artist">Pick a song or playlist to start</div>
+        <div id="playerArtist" class="player-artist">Tap any song to start</div>
       </div>
+      <button id="btnLikeCurrent" class="ctrl-btn like-btn" title="Save to Liked Songs">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+      </button>
     </div>
 
-    <!-- Center: Playback Controls & Scrubber -->
+    <!-- Center: Full Song Switching Controls (Shuffle, Prev, -10s, Play/Pause, +10s, Next, Repeat) -->
     <div class="player-center">
       <div class="player-controls">
         <button id="btnShuffle" class="ctrl-btn" title="Shuffle (S)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
         </button>
 
-        <button id="btnPrev" class="ctrl-btn" title="Previous (P)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2"/></svg>
+        <button id="btnPrev" class="ctrl-btn" title="Previous Song (P)">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2.2"/></svg>
+        </button>
+
+        <button id="btnSeekBack" class="ctrl-btn hide-mobile" title="Rewind 10s">
+          <span style="font-size:11px;font-weight:700;">-10s</span>
         </button>
 
         <button id="btnPlay" class="ctrl-btn ctrl-btn-play" title="Play / Pause (Space)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
         </button>
 
-        <button id="btnNext" class="ctrl-btn" title="Next (N)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2"/></svg>
+        <button id="btnSeekFwd" class="ctrl-btn hide-mobile" title="Forward 10s">
+          <span style="font-size:11px;font-weight:700;">+10s</span>
+        </button>
+
+        <button id="btnNext" class="ctrl-btn" title="Next Song (N)">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2.2"/></svg>
         </button>
 
         <button id="btnRepeat" class="ctrl-btn" title="Repeat (R)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
         </button>
       </div>
 
       <!-- Scrubber Seek Bar -->
       <div class="scrubber-container">
         <span id="currentTime" class="time-label">0:00</span>
-        <input type="range" id="progressBar" class="range-slider" min="0" max="100" value="0">
+        <input type="range" id="progressBar" class="range-slider" min="0" max="100" step="0.1" value="0">
         <span id="totalDuration" class="time-label">0:00</span>
       </div>
     </div>
 
-    <!-- Right: Volume & Queue Toggle -->
+    <!-- Right: Lyrics Button, Queue Drawer & Volume -->
     <div class="player-right">
-      <div class="volume-container">
-        <button id="btnVolume" class="ctrl-btn" title="Mute / Unmute">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
-        </button>
-        <input type="range" id="volumeBar" class="range-slider" min="0" max="1" step="0.01" value="0.8">
-      </div>
+      <button id="btnLyricsToggle" class="ctrl-btn lyrics-toggle-btn" title="View Song Lyrics (L)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        <span class="lyrics-btn-label">Lyrics</span>
+      </button>
 
       <button id="btnQueueToggle" class="ctrl-btn" title="Queue">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
         <span id="queueBadge" class="badge-count">0</span>
       </button>
+
+      <div class="volume-container">
+        <button id="btnVolume" class="ctrl-btn" title="Mute / Unmute">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+        </button>
+        <input type="range" id="volumeBar" class="range-slider" min="0" max="1" step="0.01" value="0.85">
+      </div>
     </div>
   </footer>
+
+  <!-- Spotify Mobile Bottom Tab Bar (Visible on Mobile Screens) -->
+  <nav class="mobile-bottom-nav">
+    <button class="mob-tab active" onclick="loadCategory('home')">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span>Home</span>
+    </button>
+    <button class="mob-tab" onclick="focusSearchInput()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span>Search</span>
+    </button>
+    <button class="mob-tab" onclick="toggleMobileSidebar()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span>Library</span>
+    </button>
+    <button class="mob-tab" onclick="toggleLyricsPanel()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+      <span>Lyrics</span>
+    </button>
+  </nav>
 
   <!-- Modal: Create Playlist -->
   <div id="createPlaylistModal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
         <h3>Create Playlist</h3>
-        <button id="btnCloseCreatePlaylist" class="btn-icon-small">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
+        <button id="btnCloseCreatePlaylist" class="btn-icon-small">&times;</button>
       </div>
       <form id="formCreatePlaylist">
         <div class="form-group">
           <label for="playlistNameInput">Playlist Name *</label>
-          <input type="text" id="playlistNameInput" placeholder="e.g. Chill Melodies, Workout Beats" required>
+          <input type="text" id="playlistNameInput" placeholder="e.g. Telugu Vibes, Gym Workout" required>
         </div>
         <div class="form-group">
           <label for="playlistDescInput">Description (Optional)</label>
-          <textarea id="playlistDescInput" rows="2" placeholder="Give your playlist a mood or description..."></textarea>
+          <textarea id="playlistDescInput" rows="2" placeholder="Add an optional description..."></textarea>
         </div>
         <div class="modal-actions">
           <button type="button" id="btnCancelCreatePlaylist" class="btn-secondary">Cancel</button>
@@ -1010,13 +1136,11 @@ INDEX_HTML = r'''<!DOCTYPE html>
     <div class="modal-card">
       <div class="modal-header">
         <h3>Add to Playlist</h3>
-        <button id="btnCloseAddToPlaylist" class="btn-icon-small">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
+        <button id="btnCloseAddToPlaylist" class="btn-icon-small">&times;</button>
       </div>
       <form id="formAddToPlaylist">
         <div class="form-group">
-          <label for="playlistSelect">Select Playlist</label>
+          <label for="playlistSelect">Choose Playlist</label>
           <select id="playlistSelect" required></select>
         </div>
         <div class="modal-actions">
@@ -1031,10 +1155,10 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="welcomeModal" class="modal-overlay">
     <div class="modal-card welcome-card">
       <div class="welcome-badge">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg>
       </div>
       <h2 class="welcome-title">Welcome to Musify</h2>
-      <p class="welcome-subtitle">No account or password needed! Just enter your name and age to start streaming Telugu, Hindi & English hits immediately.</p>
+      <p class="welcome-subtitle">No login or password needed! Enter your name and age to unlock unlimited Telugu, Hindi, English & Punjabi streaming with live lyrics.</p>
       <form id="formWelcomeProfile">
         <div class="form-group">
           <label for="userNameInput">Your Name *</label>
@@ -1046,7 +1170,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
         </div>
         <div class="modal-actions" style="margin-top: 20px; justify-content: stretch;">
           <button type="submit" class="btn-primary" style="width: 100%; justify-content: center; padding: 12px;">
-            Start Listening Now
+            Start Listening Free
           </button>
         </div>
       </form>
@@ -1071,31 +1195,32 @@ INDEX_HTML = r'''<!DOCTYPE html>
 '''
 
 STYLE_CSS = r'''/* ==========================================================================
-   Musify Modern Dark Theme Stylesheet
+   Musify • Authentic Spotify Dark UI Stylesheet (#000000 / #121212 / #1DB954)
    ========================================================================== */
 
 :root {
-  --bg-main: #0f0f13;
-  --bg-sidebar: #141419;
-  --bg-card: #1c1c24;
-  --bg-card-hover: #262632;
-  --bg-player: #16161c;
-  --border-color: #272733;
-  --text-main: #f3f4f6;
-  --text-muted: #9ca3af;
-  --text-dim: #6b7280;
-  --accent: #22c55e;
-  --accent-hover: #16a34a;
-  --accent-glow: rgba(34, 197, 94, 0.25);
-  --danger: #ef4444;
-  --danger-hover: #dc2626;
-  --sidebar-width: 250px;
-  --player-height: 86px;
-  --queue-width: 340px;
+  --bg-black: #000000;
+  --bg-main: #121212;
+  --bg-elevated: #181818;
+  --bg-card: #181818;
+  --bg-card-hover: #282828;
+  --bg-tinted: rgba(255, 255, 255, 0.07);
+  --bg-tinted-hover: rgba(255, 255, 255, 0.14);
+  --border-color: rgba(255, 255, 255, 0.08);
+  --text-main: #ffffff;
+  --text-muted: #b3b3b3;
+  --text-dim: #727272;
+  --accent: #1db954;
+  --accent-hover: #1ed760;
+  --accent-glow: rgba(29, 185, 84, 0.35);
+  --danger: #f15e6c;
+  --sidebar-width: 280px;
+  --player-height: 90px;
+  --queue-width: 350px;
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-  --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --transition: all 0.2s cubic-bezier(0.3, 0, 0.4, 1);
 }
 
 * {
@@ -1105,113 +1230,132 @@ STYLE_CSS = r'''/* =============================================================
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background-color: var(--bg-main);
+  font-family: "Circular Std", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-black);
   color: var(--text-main);
   overflow: hidden;
   height: 100vh;
   display: flex;
   flex-direction: column;
+  user-select: none;
 }
 
-/* --- Layout Grid --- */
+/* --- Spotify Split Panel Container --- */
 .app-container {
   display: flex;
   flex: 1;
+  gap: 8px;
+  padding: 8px 8px 0 8px;
   height: calc(100vh - var(--player-height));
   position: relative;
   overflow: hidden;
 }
 
-/* --- Sidebar --- */
+/* --- Left Sidebar (2 Stacked Rounded Spotify Boxes) --- */
 .sidebar {
   width: var(--sidebar-width);
-  background-color: var(--bg-sidebar);
-  border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  padding: 24px 16px;
+  gap: 8px;
   flex-shrink: 0;
+}
+
+.spotify-box {
+  background-color: var(--bg-main);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.nav-box {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.library-box {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 28px;
-  padding-left: 8px;
+  padding: 2px 6px;
 }
 
 .brand-icon {
-  width: 32px;
-  height: 32px;
-  background: linear-gradient(135deg, var(--accent), #10b981);
+  width: 34px;
+  height: 34px;
+  background-color: var(--accent);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  font-size: 18px;
-  box-shadow: 0 4px 12px var(--accent-glow);
+  box-shadow: 0 4px 14px var(--accent-glow);
 }
 
 .brand-name {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
-  background: linear-gradient(135deg, #ffffff, #a1a1aa);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.6px;
+  color: #fff;
+}
+
+.pro-pill {
+  font-size: 9px;
+  font-weight: 800;
+  background: var(--bg-tinted);
+  color: var(--accent);
+  padding: 2px 6px;
+  border-radius: 99px;
+  letter-spacing: 0.6px;
 }
 
 .nav-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .nav-link {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
+  gap: 16px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   text-decoration: none;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 14.5px;
+  font-weight: 700;
   cursor: pointer;
   transition: var(--transition);
 }
 
 .nav-link:hover, .nav-link.active {
   color: var(--text-main);
-  background-color: var(--bg-card);
+  background-color: var(--bg-tinted);
 }
 
-.nav-link.active {
-  color: var(--accent);
-}
-
-.sidebar-divider {
-  height: 1px;
-  background-color: var(--border-color);
-  margin: 18px 0;
+.nav-link .song-badge {
+  margin-left: auto;
+  background: var(--bg-tinted);
+  color: var(--text-main);
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 11px;
 }
 
 .playlist-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 8px 10px 8px;
-}
-
-.playlist-header span {
-  font-size: 12px;
+  padding: 2px 4px 12px 4px;
+  color: var(--text-muted);
+  font-size: 14px;
   font-weight: 700;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  letter-spacing: 0.5px;
 }
 
 .btn-icon-small {
@@ -1219,17 +1363,18 @@ body {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 4px;
-  border-radius: var(--radius-sm);
+  padding: 6px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: var(--transition);
+  font-size: 18px;
 }
 
 .btn-icon-small:hover {
   color: var(--text-main);
-  background-color: var(--bg-card-hover);
+  background-color: var(--bg-tinted);
 }
 
 .sidebar-playlists {
@@ -1244,59 +1389,60 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: 13.5px;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
   transition: var(--transition);
 }
 
 .playlist-item:hover, .playlist-item.active {
   color: var(--text-main);
-  background-color: var(--bg-card);
+  background-color: var(--bg-card-hover);
 }
 
-.playlist-item .song-badge {
-  font-size: 11px;
-  color: var(--text-dim);
+.playlist-item.active {
+  color: var(--accent);
 }
 
-/* --- Main Content Area --- */
+/* --- Main Rounded Content Panel --- */
 .main-area {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background-color: var(--bg-main);
+  background: linear-gradient(180deg, #1f2a24 0%, var(--bg-main) 290px);
+  border-radius: var(--radius-md);
   overflow: hidden;
+  position: relative;
 }
 
 .top-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 16px 28px;
-  background: rgba(15, 15, 19, 0.85);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border-color);
+  gap: 14px;
+  padding: 14px 24px;
+  background: rgba(18, 18, 18, 0.78);
+  backdrop-filter: blur(16px);
   z-index: 10;
 }
 
 .search-box {
   display: flex;
   align-items: center;
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-color);
+  background-color: #242424;
+  border: 1px solid transparent;
   border-radius: 999px;
-  padding: 6px 16px;
-  width: 360px;
+  padding: 9px 16px;
+  width: 340px;
   transition: var(--transition);
 }
 
 .search-box:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  background-color: #2a2a2a;
+  border-color: #ffffff;
 }
 
 .search-box input {
@@ -1306,7 +1452,7 @@ body {
   color: var(--text-main);
   font-size: 14px;
   width: 100%;
-  margin-left: 8px;
+  margin-left: 10px;
 }
 
 .category-pills {
@@ -1321,65 +1467,141 @@ body {
 }
 
 .pill-btn {
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-color);
-  color: var(--text-muted);
-  padding: 6px 14px;
+  background-color: var(--bg-tinted);
+  border: none;
+  color: var(--text-main);
+  padding: 7px 14px;
   border-radius: 999px;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   transition: var(--transition);
   white-space: nowrap;
 }
 
 .pill-btn:hover {
-  background-color: var(--bg-card-hover);
-  color: var(--text-main);
+  background-color: var(--bg-tinted-hover);
 }
 
 .pill-btn.active {
-  background-color: var(--accent);
-  border-color: var(--accent);
-  color: #ffffff;
-  font-weight: 600;
+  background-color: #ffffff;
+  color: #000000;
+  font-weight: 700;
 }
 
-/* --- Scrollable Content View --- */
+/* --- Spotify Quick-Play 6-Tile Greeting Grid --- */
 .content-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 28px;
+  padding: 16px 24px 36px 24px;
+}
+
+.quick-tiles-section {
+  margin-bottom: 26px;
+}
+
+.greeting-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.6px;
+  margin-bottom: 14px;
+}
+
+.quick-tiles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.quick-tile {
+  display: flex;
+  align-items: center;
+  background-color: var(--bg-tinted);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+  transition: var(--transition);
+  height: 56px;
+  padding-right: 12px;
+}
+
+.quick-tile:hover {
+  background-color: var(--bg-tinted-hover);
+}
+
+.quick-tile img, .liked-tile-icon {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  flex-shrink: 0;
+  margin-right: 12px;
+}
+
+.liked-tile-icon {
+  background: linear-gradient(135deg, #450af5, #c4efd9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: #fff;
+}
+
+.quick-tile span {
+  font-size: 13.5px;
+  font-weight: 700;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tile-play {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 34px !important;
+  opacity: 0;
+  transform: scale(0.9);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.5);
+  transition: var(--transition);
+}
+
+.quick-tile:hover .tile-play {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .view-header {
-  margin-bottom: 22px;
+  margin-bottom: 16px;
 }
 
 .view-heading {
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
-  margin-bottom: 4px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  margin-bottom: 2px;
 }
 
 .view-subheading {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
-/* --- Song Cards Grid --- */
+/* --- Spotify Song Cards Grid --- */
 .cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
   gap: 18px;
 }
 
 .song-card {
   background-color: var(--bg-card);
-  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  padding: 12px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -1389,9 +1611,11 @@ body {
 
 .song-card:hover {
   background-color: var(--bg-card-hover);
-  transform: translateY(-4px);
-  border-color: #3b3b48;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.song-card.playing-now {
+  border: 1px solid var(--accent);
+  background-color: rgba(29, 185, 84, 0.12);
 }
 
 .card-img-wrapper {
@@ -1400,68 +1624,68 @@ body {
   aspect-ratio: 1;
   border-radius: var(--radius-sm);
   overflow: hidden;
-  margin-bottom: 10px;
-  background-color: #272733;
+  margin-bottom: 12px;
+  background-color: #242424;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 .card-img-wrapper img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.3s ease;
-}
-
-.song-card:hover .card-img-wrapper img {
-  transform: scale(1.05);
 }
 
 .card-play-btn {
   position: absolute;
   bottom: 8px;
   right: 8px;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   background-color: var(--accent);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: #000;
   border: none;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.45);
   opacity: 0;
   transform: translateY(8px);
   transition: var(--transition);
   cursor: pointer;
 }
 
-.song-card:hover .card-play-btn {
+.song-card:hover .card-play-btn, .song-card.playing-now .card-play-btn {
   opacity: 1;
   transform: translateY(0);
 }
 
 .card-play-btn:hover {
   background-color: var(--accent-hover);
-  transform: scale(1.08);
+  transform: scale(1.06);
 }
 
 .card-info {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .card-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 14.5px;
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-main);
 }
 
+.song-card.playing-now .card-title {
+  color: var(--accent);
+}
+
 .card-artist {
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1472,90 +1696,112 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
 }
 
 .card-actions button {
   background: transparent;
   border: none;
-  color: var(--text-dim);
+  color: var(--text-muted);
   cursor: pointer;
-  padding: 4px;
+  padding: 4px 6px;
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: 11.5px;
+  font-weight: 600;
   transition: var(--transition);
 }
 
 .card-actions button:hover {
-  color: var(--text-main);
-  background-color: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  background-color: var(--bg-tinted-hover);
 }
 
-/* --- Playlist View Banner & Table --- */
-.playlist-banner {
-  display: flex;
-  align-items: flex-end;
-  gap: 24px;
-  margin-bottom: 24px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid var(--border-color);
+.card-actions button.liked {
+  color: var(--accent);
 }
 
-.playlist-cover-art {
-  width: 160px;
-  height: 160px;
-  border-radius: var(--radius-md);
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 54px;
-  color: #ffffff;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-}
-
-.playlist-meta {
+/* --- Spotify Full-Screen / Overlay Lyrics Panel --- */
+.lyrics-panel {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(160deg, #1b4332 0%, #081c15 55%, #000000 100%);
+  z-index: 25;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  padding: 24px 36px;
+  transform: translateY(100%);
+  transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.playlist-tag {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--accent);
-  letter-spacing: 1px;
+.lyrics-panel.open {
+  transform: translateY(0);
 }
 
-.playlist-title-lg {
-  font-size: 36px;
+.lyrics-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.lyrics-song-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.lyrics-song-meta img {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.lyrics-song-title {
+  font-size: 18px;
   font-weight: 800;
-  letter-spacing: -0.5px;
+  color: #ffffff;
 }
 
-.playlist-desc-lg {
-  font-size: 14px;
-  color: var(--text-muted);
+.lyrics-song-artist {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
 }
 
+.lyrics-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 12px;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.92);
+  text-align: center;
+  max-width: 780px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* --- Playlist Table & Controls --- */
 .playlist-controls-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 8px;
+  gap: 14px;
+  margin-bottom: 18px;
 }
 
 .btn-primary {
   background-color: var(--accent);
-  color: #ffffff;
+  color: #000000;
   border: none;
-  padding: 10px 22px;
+  padding: 11px 24px;
   border-radius: 999px;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 800;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -1565,17 +1811,17 @@ body {
 
 .btn-primary:hover {
   background-color: var(--accent-hover);
-  transform: scale(1.02);
+  transform: scale(1.03);
 }
 
 .btn-danger {
   background-color: transparent;
   color: var(--danger);
   border: 1px solid var(--danger);
-  padding: 8px 18px;
+  padding: 9px 18px;
   border-radius: 999px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   transition: var(--transition);
 }
@@ -1585,7 +1831,6 @@ body {
   color: #fff;
 }
 
-/* Tracklist Table */
 .track-table {
   width: 100%;
   border-collapse: collapse;
@@ -1595,7 +1840,7 @@ body {
   text-align: left;
   padding: 10px 14px;
   font-size: 12px;
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-weight: 600;
   border-bottom: 1px solid var(--border-color);
   text-transform: uppercase;
@@ -1608,46 +1853,46 @@ body {
 }
 
 .track-row:hover {
-  background-color: var(--bg-card);
+  background-color: var(--bg-tinted);
 }
 
 .track-row td {
   padding: 10px 14px;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--text-muted);
   vertical-align: middle;
 }
 
 .track-row td.track-title-cell {
   color: var(--text-main);
-  font-weight: 600;
+  font-weight: 700;
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
 .track-row img {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   border-radius: 4px;
   object-fit: cover;
 }
 
-/* --- Slide-Over Queue Panel --- */
+/* --- Slide-Over Queue Drawer --- */
 .queue-panel {
   position: absolute;
   top: 0;
   right: 0;
   width: var(--queue-width);
   height: 100%;
-  background-color: var(--bg-sidebar);
+  background-color: #181818;
   border-left: 1px solid var(--border-color);
-  z-index: 20;
+  z-index: 26;
   display: flex;
   flex-direction: column;
   transform: translateX(100%);
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
+  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.65);
 }
 
 .queue-panel.open {
@@ -1664,7 +1909,7 @@ body {
 
 .queue-header h3 {
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .queue-list {
@@ -1682,24 +1927,24 @@ body {
   gap: 10px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  background-color: var(--bg-card);
+  background-color: var(--bg-tinted);
   border: 1px solid transparent;
+  cursor: pointer;
   transition: var(--transition);
 }
 
 .queue-item:hover {
-  border-color: var(--border-color);
-  background-color: var(--bg-card-hover);
+  background-color: var(--bg-tinted-hover);
 }
 
 .queue-item.active {
   border-color: var(--accent);
-  background-color: rgba(34, 197, 94, 0.1);
+  background-color: rgba(29, 185, 84, 0.16);
 }
 
 .queue-item img {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 4px;
   object-fit: cover;
 }
@@ -1710,30 +1955,29 @@ body {
 }
 
 .queue-item-title {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 13.5px;
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .queue-item-artist {
-  font-size: 11px;
-  color: var(--text-dim);
+  font-size: 11.5px;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* --- Bottom Persistent Player --- */
+/* --- Spotify Bottom Persistent Player --- */
 .bottom-player {
   height: var(--player-height);
-  background-color: var(--bg-player);
-  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-black);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 18px;
   z-index: 30;
   flex-shrink: 0;
 }
@@ -1741,14 +1985,15 @@ body {
 .player-left {
   display: flex;
   align-items: center;
-  gap: 14px;
-  width: 280px;
-  min-width: 200px;
+  gap: 12px;
+  width: 300px;
+  min-width: 180px;
+  cursor: pointer;
 }
 
 .player-thumb {
-  width: 54px;
-  height: 54px;
+  width: 56px;
+  height: 56px;
   border-radius: var(--radius-sm);
   background-color: var(--bg-card);
   object-fit: cover;
@@ -1758,13 +2003,14 @@ body {
 .player-track-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   overflow: hidden;
+  flex: 1;
 }
 
 .player-title {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1776,6 +2022,11 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.like-btn.liked svg {
+  fill: var(--accent);
+  stroke: var(--accent);
 }
 
 .player-center {
@@ -1790,7 +2041,7 @@ body {
 .player-controls {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
 }
 
 .ctrl-btn {
@@ -1801,15 +2052,15 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  gap: 5px;
   transition: var(--transition);
   padding: 6px;
-  border-radius: 50%;
+  border-radius: 999px;
 }
 
 .ctrl-btn:hover {
   color: var(--text-main);
-  transform: scale(1.1);
+  transform: scale(1.08);
 }
 
 .ctrl-btn.active {
@@ -1817,16 +2068,30 @@ body {
 }
 
 .ctrl-btn-play {
-  width: 38px;
-  height: 38px;
-  background-color: var(--text-main);
-  color: #000;
+  width: 36px;
+  height: 36px;
+  background-color: #ffffff;
+  color: #000000;
   border-radius: 50%;
 }
 
 .ctrl-btn-play:hover {
-  background-color: #ffffff;
+  background-color: var(--accent);
+  color: #000000;
   transform: scale(1.08);
+}
+
+.lyrics-toggle-btn {
+  background-color: var(--bg-tinted);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.lyrics-toggle-btn.active {
+  background-color: var(--accent);
+  color: #000;
 }
 
 .scrubber-container {
@@ -1838,7 +2103,7 @@ body {
 
 .time-label {
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--text-muted);
   width: 35px;
   text-align: center;
 }
@@ -1849,10 +2114,13 @@ body {
   width: 100%;
   height: 4px;
   border-radius: 2px;
-  background: #333340;
+  background: #4d4d4d;
   outline: none;
   cursor: pointer;
-  transition: background 0.2s;
+}
+
+.range-slider:hover {
+  background: var(--accent);
 }
 
 .range-slider::-webkit-slider-thumb {
@@ -1861,53 +2129,82 @@ body {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--text-main);
+  background: #ffffff;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.2s, transform 0.2s;
-}
-
-.scrubber-container:hover .range-slider::-webkit-slider-thumb,
-.volume-container:hover .range-slider::-webkit-slider-thumb {
-  opacity: 1;
 }
 
 .player-right {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 14px;
-  width: 280px;
-  min-width: 180px;
+  gap: 10px;
+  width: 300px;
+  min-width: 160px;
 }
 
 .volume-container {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 120px;
+  width: 110px;
 }
 
-/* Badge on Queue Toggle */
 .badge-count {
   background-color: var(--accent);
-  color: #ffffff;
+  color: #000000;
   font-size: 10px;
-  font-weight: 700;
-  padding: 1px 5px;
+  font-weight: 800;
+  padding: 1px 6px;
   border-radius: 999px;
-  margin-left: 4px;
 }
 
-/* --- Modals --- */
+/* --- Modals & Profile Card --- */
+.user-profile-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background-color: var(--bg-tinted);
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.user-profile-card:hover {
+  background-color: var(--bg-tinted-hover);
+}
+
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  color: #000;
+  font-weight: 800;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.user-name-display {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.user-age-display {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1923,16 +2220,15 @@ body {
 }
 
 .modal-card {
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-color);
+  background-color: #242424;
   border-radius: var(--radius-lg);
   padding: 24px;
   width: 90%;
-  max-width: 440px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  max-width: 420px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.7);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .modal-header {
@@ -1941,35 +2237,30 @@ body {
   justify-content: space-between;
 }
 
-.modal-header h3 {
-  font-size: 18px;
-  font-weight: 700;
-}
-
 .form-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  text-align: left;
 }
 
 .form-group label {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-muted);
 }
 
 .form-group input, .form-group textarea, .form-group select {
-  background-color: var(--bg-main);
+  background-color: #121212;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
-  color: var(--text-main);
+  color: #fff;
   font-size: 14px;
   outline: none;
-  transition: border-color 0.2s;
 }
 
-.form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+.form-group input:focus {
   border-color: var(--accent);
 }
 
@@ -1977,94 +2268,89 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 8px;
 }
 
 .btn-secondary {
-  background-color: transparent;
-  border: 1px solid var(--border-color);
-  color: var(--text-muted);
-  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid var(--text-muted);
+  color: #fff;
+  padding: 8px 18px;
   border-radius: 999px;
-  font-size: 13.5px;
+  font-weight: 700;
   cursor: pointer;
-  transition: var(--transition);
 }
 
-.btn-secondary:hover {
-  background-color: var(--bg-card-hover);
-  color: var(--text-main);
+.welcome-card {
+  text-align: center;
+}
+
+.welcome-badge {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 6px auto;
 }
 
 /* --- Toast Notifications --- */
 .toast-container {
   position: fixed;
-  bottom: calc(var(--player-height) + 16px);
+  bottom: calc(var(--player-height) + 18px);
   right: 24px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  z-index: 110;
+  z-index: 120;
   pointer-events: none;
 }
 
 .toast {
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-color);
-  color: var(--text-main);
-  padding: 10px 16px;
-  border-radius: var(--radius-md);
-  font-size: 13.5px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  animation: slideInUp 0.3s ease, fadeOut 0.3s ease 2.7s forwards;
-  pointer-events: auto;
+  background-color: var(--accent);
+  color: #000000;
+  font-weight: 800;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
-@keyframes slideInUp {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes fadeOut {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
-/* Hidden elements */
-.hidden {
-  display: none !important;
-}
-
-/* --- Mobile & Android APK Responsive Design --- */
-.mobile-menu-btn {
+.mobile-menu-btn, .mobile-bottom-nav {
   display: none;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  color: var(--text-main);
-  padding: 8px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
 }
 
+/* --- Mobile Spotify App Responsive Layout --- */
 @media (max-width: 768px) {
+  .app-container {
+    padding: 0;
+    height: calc(100vh - var(--player-height) - 56px);
+  }
+
+  .main-area {
+    border-radius: 0;
+  }
+
   .mobile-menu-btn {
     display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    background: var(--bg-tinted);
+    border: none;
+    color: #fff;
+    padding: 8px;
+    border-radius: var(--radius-sm);
   }
 
   .sidebar {
     position: fixed;
     top: 0;
     left: 0;
-    bottom: var(--player-height);
-    z-index: 50;
+    bottom: calc(var(--player-height) + 56px);
+    z-index: 60;
+    background: #000;
+    padding: 8px;
     transform: translateX(-100%);
     transition: transform 0.28s ease;
-    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.7);
   }
 
   .sidebar.mobile-open {
@@ -2073,59 +2359,46 @@ body {
 
   .top-bar {
     flex-wrap: wrap;
-    padding: 12px 16px;
-    gap: 10px;
+    padding: 10px 14px;
   }
 
   .search-box {
     flex: 1;
     width: auto;
-    min-width: 180px;
   }
 
   .category-pills {
     width: 100%;
-    padding-bottom: 2px;
   }
 
-  .content-scroll {
-    padding: 16px;
+  .quick-tiles-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
   }
 
   .cards-grid {
-    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+    grid-template-columns: repeat(2, 1fr);
     gap: 12px;
   }
 
-  .playlist-banner {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 14px;
+  .lyrics-content {
+    font-size: 18px;
+    padding: 20px 6px;
   }
 
-  .playlist-cover-art {
-    width: 110px;
-    height: 110px;
-  }
-
-  .playlist-title-lg {
-    font-size: 24px;
-  }
-
-  .queue-panel {
-    width: 100%;
+  .hide-mobile, .volume-container, .lyrics-btn-label {
+    display: none !important;
   }
 
   .bottom-player {
-    padding: 0 12px;
-    gap: 8px;
+    height: 76px;
+    padding: 0 10px;
   }
 
   .player-left {
     width: auto;
     min-width: 110px;
-    max-width: 135px;
-    gap: 8px;
+    max-width: 145px;
   }
 
   .player-thumb {
@@ -2138,104 +2411,41 @@ body {
     min-width: auto;
   }
 
-  .volume-container {
-    display: none;
+  .mobile-bottom-nav {
+    display: flex;
+    height: 56px;
+    background-color: #000000;
+    border-top: 1px solid var(--border-color);
+    justify-content: space-around;
+    align-items: center;
+    z-index: 40;
   }
-}
 
-/* --- User Profile Card & Quick Welcome Onboarding (Name & Age) --- */
-.user-profile-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-color);
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  margin-bottom: 18px;
-  cursor: pointer;
-  transition: var(--transition);
-}
+  .mob-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+  }
 
-.user-profile-card:hover {
-  background-color: var(--bg-card-hover);
-  border-color: var(--accent);
-}
-
-.user-avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), #3b82f6);
-  color: #fff;
-  font-weight: 700;
-  font-size: 15px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.user-profile-info {
-  overflow: hidden;
-}
-
-.user-name-display {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--text-main);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.user-age-display {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.welcome-card {
-  text-align: center;
-  padding: 30px 26px;
-}
-
-.welcome-badge {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), #10b981);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 8px auto;
-  box-shadow: 0 8px 24px var(--accent-glow);
-}
-
-.welcome-title {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -0.4px;
-}
-
-.welcome-subtitle {
-  font-size: 13px;
-  color: var(--text-muted);
-  line-height: 1.5;
-  margin-bottom: 6px;
-}
-
-#formWelcomeProfile .form-group {
-  text-align: left;
+  .mob-tab.active, .mob-tab:hover {
+    color: #ffffff;
+  }
 }
 '''
 
-PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, volume) */
+PLAYER_JS = r'''/* Musify Spotify Edition - Audio Engine, Song Switcher & Live Lyrics Controller */
 (function () {
   const $ = (id) => document.getElementById(id);
   const audio = $("audio");
 
-  const ICON_PLAY = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+  const ICON_PLAY = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>';
   const ICON_PAUSE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
 
   const state = { queue: [], index: -1, shuffle: false, repeat: 0, urlTry: 0 };
@@ -2261,29 +2471,9 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
     t.className = "toast";
     t.textContent = msg;
     box.appendChild(t);
-    setTimeout(() => t.remove(), 3000);
+    setTimeout(() => t.remove(), 2600);
   }
   window.toast = toast;
-
-  function save() {
-    try {
-      localStorage.setItem("musify_queue", JSON.stringify({ queue: state.queue, index: state.index }));
-    } catch (e) {}
-  }
-
-  function load() {
-    try {
-      const d = JSON.parse(localStorage.getItem("musify_queue") || "null");
-      if (d && Array.isArray(d.queue)) {
-        state.queue = d.queue;
-        state.index = typeof d.index === "number" ? d.index : -1;
-      }
-    } catch (e) {}
-  }
-
-  function current() {
-    return state.queue[state.index] || null;
-  }
 
   function ensureHttps(u) {
     return u ? String(u).trim().replace(/^http:\/\//i, "https://") : "";
@@ -2309,12 +2499,103 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
     return expanded;
   }
 
+  function save() {
+    try {
+      localStorage.setItem("musify_queue", JSON.stringify({ queue: state.queue, index: state.index }));
+    } catch (e) {}
+  }
+
+  function load() {
+    try {
+      const d = JSON.parse(localStorage.getItem("musify_queue") || "null");
+      if (d && Array.isArray(d.queue)) {
+        state.queue = d.queue;
+        state.index = typeof d.index === "number" ? d.index : -1;
+      }
+    } catch (e) {}
+  }
+
+  function current() {
+    return state.queue[state.index] || null;
+  }
+
+  // ---- Lyrics Fetching & Display ----
+  async function loadLyricsForCurrent() {
+    const s = current();
+    const box = $("lyricsContent");
+    if (!s) {
+      box.innerHTML = "Select and play any song to view live lyrics here.";
+      return;
+    }
+    $("lyricsSongTitle").textContent = s.title || "Unknown Title";
+    $("lyricsSongArtist").textContent = s.artist || "";
+    if (s.image_url) $("lyricsThumb").src = s.image_url;
+
+    if (s.lyrics) {
+      box.innerHTML = s.lyrics;
+      return;
+    }
+
+    box.innerHTML = '<div style="opacity:0.6;font-size:16px;">Loading lyrics for "' + esc(s.title) + '"...</div>';
+    try {
+      const params = new URLSearchParams({
+        id: s.id || "",
+        title: s.title || "",
+        artist: s.artist || ""
+      });
+      const res = await fetch("/api/lyrics?" + params.toString());
+      const data = await res.json();
+      if (data.status && data.lyrics) {
+        s.lyrics = data.lyrics;
+        box.innerHTML = data.lyrics;
+      } else {
+        box.innerHTML =
+          '<div style="opacity:0.75;font-size:18px;line-height:1.8;">' +
+          "🎵 Now Streaming: <strong>" + esc(s.title) + "</strong><br>" +
+          "Artist: " + esc(s.artist) + "<br>" +
+          (s.album ? "Album: " + esc(s.album) + "<br><br>" : "<br>") +
+          '<span style="font-size:14px;opacity:0.7;">(Synced studio lyrics are not yet published for this track)</span></div>';
+      }
+    } catch (e) {
+      box.innerHTML = "🎵 Streaming " + esc(s.title) + " — " + esc(s.artist);
+    }
+  }
+
+  window.toggleLyricsPanel = function () {
+    const panel = $("lyricsBox");
+    const btn = $("btnLyricsToggle");
+    const isOpen = panel.classList.toggle("open");
+    if (btn) btn.classList.toggle("active", isOpen);
+    if (isOpen) loadLyricsForCurrent();
+  };
+
+  $("btnLyricsToggle").addEventListener("click", window.toggleLyricsPanel);
+  $("btnCloseLyrics").addEventListener("click", () => {
+    $("lyricsBox").classList.remove("open");
+    $("btnLyricsToggle").classList.remove("active");
+  });
+
   function updateInfo() {
     const s = current();
     $("playerTitle").textContent = s ? s.title : "No song playing";
-    $("playerArtist").textContent = s ? s.artist : "Pick a song or playlist to start";
+    $("playerArtist").textContent = s ? s.artist : "Tap any song to start";
     if (s && s.image_url) $("playerImg").src = s.image_url;
-    document.title = s ? s.title + " - Musify" : "Musify - Stream Music & Create Playlists";
+    document.title = s ? s.title + " • Musify" : "Musify • Spotify Edition";
+
+    // Highlight active card in grid
+    document.querySelectorAll(".song-card").forEach((card) => {
+      const cardTitle = card.querySelector(".card-title");
+      card.classList.toggle("playing-now", Boolean(s && cardTitle && cardTitle.textContent === s.title));
+    });
+
+    // Update heart icon if liked
+    if (window.updateLikeButtonState) window.updateLikeButtonState(s);
+
+    // Update lyrics panel if open
+    if ($("lyricsBox").classList.contains("open")) {
+      loadLyricsForCurrent();
+    }
+
     if ("mediaSession" in navigator && s) {
       try {
         navigator.mediaSession.metadata = new MediaMetadata({
@@ -2329,7 +2610,7 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
     const list = $("queueList");
     $("queueBadge").textContent = state.queue.length;
     if (!state.queue.length) {
-      list.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:12px;">Queue is empty</div>';
+      list.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:12px;">Queue is empty. Tap any song to start!</div>';
       return;
     }
     list.innerHTML = state.queue.map((s, i) => `
@@ -2347,7 +2628,6 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
     const s = current();
     if (!s) return;
     const urls = urlsFor(s);
-    if (!urls.length) { toast("No stream available for this song"); return; }
     audio.src = urls[Math.min(state.urlTry, urls.length - 1)];
     const p = audio.play();
     if (p && p.catch) p.catch(() => {});
@@ -2372,9 +2652,7 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
       return playAt(r);
     }
     if (state.index + 1 < state.queue.length) return playAt(state.index + 1);
-    if (state.repeat === 1) return playAt(0);
-    if (auto) { setPlayIcon(false); }
-    else playAt(0);
+    return playAt(0);
   }
 
   function prev() {
@@ -2396,12 +2674,12 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
     $("btnPlay").innerHTML = playing ? ICON_PAUSE : ICON_PLAY;
   }
 
-  // ---- Public API ----
   window.Player = {
     playSongs(songs, startIndex) {
       state.queue = songs.slice();
       playAt(startIndex || 0);
     },
+    currentSong: current,
     addToQueue(song) {
       state.queue.push(song);
       renderQueue(); save();
@@ -2410,7 +2688,7 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
     playNext(song) {
       state.queue.splice(state.index + 1, 0, song);
       renderQueue(); save();
-      toast("Will play next");
+      toast("Playing next: " + song.title);
     },
     removeAt(i) {
       const wasCurrent = i === state.index;
@@ -2453,7 +2731,6 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
       startAudio();
       return;
     }
-    // Try resolving a fresh stream via iTunes India API if saved link expired
     if (!s._resolvedFresh) {
       s._resolvedFresh = true;
       try {
@@ -2474,21 +2751,31 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
   $("btnPlay").addEventListener("click", toggle);
   $("btnNext").addEventListener("click", () => next(false));
   $("btnPrev").addEventListener("click", prev);
+  if ($("btnSeekBack")) {
+    $("btnSeekBack").addEventListener("click", () => {
+      audio.currentTime = Math.max(0, (audio.currentTime || 0) - 10);
+    });
+  }
+  if ($("btnSeekFwd")) {
+    $("btnSeekFwd").addEventListener("click", () => {
+      if (audio.duration) audio.currentTime = Math.min(audio.duration, (audio.currentTime || 0) + 10);
+    });
+  }
   $("btnShuffle").addEventListener("click", () => {
     state.shuffle = !state.shuffle;
     $("btnShuffle").classList.toggle("active", state.shuffle);
-    toast("Shuffle " + (state.shuffle ? "on" : "off"));
+    toast("Shuffle " + (state.shuffle ? "ON" : "OFF"));
   });
   $("btnRepeat").addEventListener("click", () => {
     state.repeat = (state.repeat + 1) % 3;
     $("btnRepeat").classList.toggle("active", state.repeat > 0);
-    toast(["Repeat off", "Repeat all", "Repeat one"][state.repeat]);
+    toast(["Repeat OFF", "Repeat ALL", "Repeat ONE"][state.repeat]);
   });
   $("progressBar").addEventListener("input", (e) => {
     if (audio.duration) audio.currentTime = (e.target.value / 100) * audio.duration;
   });
   $("volumeBar").addEventListener("input", (e) => { audio.volume = parseFloat(e.target.value); });
-  audio.volume = 0.8;
+  audio.volume = 0.85;
   $("btnVolume").addEventListener("click", () => {
     audio.muted = !audio.muted;
     $("btnVolume").style.opacity = audio.muted ? "0.4" : "1";
@@ -2511,10 +2798,11 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
     if (tag === "input" || tag === "textarea" || tag === "select") return;
     const k = e.key.toLowerCase();
     if (e.code === "Space") { e.preventDefault(); toggle(); }
-    else if (k === "n") next(false);
-    else if (k === "p") prev();
+    else if (k === "n" || e.key === "ArrowRight") next(false);
+    else if (k === "p" || e.key === "ArrowLeft") prev();
     else if (k === "s") $("btnShuffle").click();
     else if (k === "r") $("btnRepeat").click();
+    else if (k === "l") window.toggleLyricsPanel();
   });
 
   if ("mediaSession" in navigator) {
@@ -2526,7 +2814,6 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
     } catch (e) {}
   }
 
-  // ---- Init ----
   load();
   updateInfo();
   renderQueue();
@@ -2534,7 +2821,7 @@ PLAYER_JS = r'''/* Musify - Audio player engine (queue, shuffle, repeat, seek, v
 })();
 '''
 
-APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) */
+APP_JS = r'''/* Musify Spotify Edition - Discovery, Liked Songs, Playlists & Profile Controller */
 (function () {
   const $ = (id) => document.getElementById(id);
   const esc = window.esc;
@@ -2545,14 +2832,76 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
   let pendingSong = null;
   let openPlaylistId = null;
   let searchTimer = null;
+  let currentPage = 1;
+  let activeSearchQuery = "";
 
   const TITLES = {
-    home: ["Trending Now", "Streaming live from high-speed music CDNs"],
-    trending: ["Trending Now", "What India is listening to"],
-    telugu: ["Telugu Hits", "Top Telugu songs"],
-    hindi: ["Hindi Hits", "Top Bollywood songs"],
-    english: ["English Hits", "Top English pop songs"],
-    punjabi: ["Punjabi Hits", "Top Punjabi songs"]
+    home: ["Made For You • Top Hits", "Non-stop Telugu, Hindi, English & Punjabi streams"],
+    trending: ["Viral & Trending India", "What everyone is streaming right now"],
+    telugu: ["Telugu Blockbusters", "Sid Sriram, Thaman S, DSP, Anirudh & Tollywood hits"],
+    hindi: ["Bollywood Top 50", "Arijit Singh, Pritam, Shreya Ghoshal & Hindi chartbusters"],
+    english: ["Global English Pop", "The Weeknd, Ed Sheeran, Taylor Swift & Dua Lipa"],
+    punjabi: ["Punjabi Party Anthems", "AP Dhillon, Diljit Dosanjh & Karan Aujla"]
+  };
+
+  // ---- Liked Songs Storage ----
+  function getLikedSongs() {
+    try { return JSON.parse(localStorage.getItem("musify_liked_songs") || "[]"); }
+    catch (e) { return []; }
+  }
+
+  function saveLikedSongs(list) {
+    try { localStorage.setItem("musify_liked_songs", JSON.stringify(list)); }
+    catch (e) {}
+    if ($("likedCountBadge")) $("likedCountBadge").textContent = list.length;
+  }
+
+  function isSongLiked(song) {
+    if (!song) return false;
+    return getLikedSongs().some((s) => s.title === song.title && s.artist === song.artist);
+  }
+
+  function toggleLikeSong(song) {
+    if (!song) return;
+    const list = getLikedSongs();
+    const idx = list.findIndex((s) => s.title === song.title && s.artist === song.artist);
+    if (idx !== -1) {
+      list.splice(idx, 1);
+      toast("Removed from Liked Songs");
+    } else {
+      list.unshift(song);
+      toast("Added to Liked Songs ♥");
+    }
+    saveLikedSongs(list);
+    window.updateLikeButtonState(window.Player.currentSong());
+  }
+
+  window.updateLikeButtonState = function (song) {
+    const btn = $("btnLikeCurrent");
+    if (!btn) return;
+    btn.classList.toggle("liked", isSongLiked(song));
+  };
+
+  if ($("btnLikeCurrent")) {
+    $("btnLikeCurrent").addEventListener("click", () => {
+      const s = window.Player.currentSong();
+      if (s) toggleLikeSong(s);
+      else toast("Play a song first to like it");
+    });
+  }
+
+  window.openLikedSongs = function () {
+    closeMobileMenu();
+    openPlaylistId = "liked";
+    $("quickTilesSection").style.display = "none";
+    const liked = getLikedSongs();
+    currentSongs = liked;
+    setHeading("Liked Songs ♥", liked.length + " saved tracks on your device");
+    if (!liked.length) {
+      $("content").innerHTML = '<div style="color:var(--text-muted);padding:30px 0;">You haven't liked any songs yet. Tap the ♥ heart button on any song or in the bottom player!</div>';
+      return;
+    }
+    renderSongs(liked, false, true);
   };
 
   async function api(url, options) {
@@ -2581,25 +2930,36 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
   }
 
   function closeMobileMenu() {
-    document.querySelector(".sidebar").classList.remove("mobile-open");
+    $("sidebar").classList.remove("mobile-open");
   }
 
-  let currentPage = 1;
-  let activeSearchQuery = "";
+  window.toggleMobileSidebar = function () {
+    $("sidebar").classList.toggle("mobile-open");
+  };
+
+  window.focusSearchInput = function () {
+    closeMobileMenu();
+    $("lyricsBox").classList.remove("open");
+    $("query").focus();
+  };
 
   // ---------- Song grid ----------
-  function renderSongs(songs, append) {
+  function renderSongs(songs, append, hideLoadMore) {
     currentSongs = append ? currentSongs.concat(songs) : songs;
     if (!currentSongs.length) {
       $("content").innerHTML = '<div style="color:var(--text-muted);padding:30px 0;">No songs found.</div>';
       return;
     }
-    $("content").innerHTML = '<div class="cards-grid">' + currentSongs.map((s, i) => `
-      <div class="song-card" data-i="${i}">
+    const cur = window.Player.currentSong();
+    $("content").innerHTML = '<div class="cards-grid">' + currentSongs.map((s, i) => {
+      const playing = Boolean(cur && cur.title === s.title);
+      const liked = isSongLiked(s);
+      return `
+      <div class="song-card ${playing ? "playing-now" : ""}" data-i="${i}">
         <div class="card-img-wrapper">
           <img src="${esc(s.image_url)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
-          <button class="card-play-btn" data-act="play" title="Play">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <button class="card-play-btn" data-act="play" title="Play Song">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
           </button>
         </div>
         <div class="card-info">
@@ -2607,14 +2967,17 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
           <div class="card-artist">${esc(s.artist)}</div>
         </div>
         <div class="card-actions">
-          <button data-act="next" title="Play next">Next</button>
-          <button data-act="queue" title="Add to queue">+ Queue</button>
-          <button data-act="playlist" title="Add to playlist">+ List</button>
+          <button data-act="like" class="${liked ? "liked" : ""}" title="Like Song">♥</button>
+          <button data-act="lyrics" title="View Lyrics">🎤 Lyrics</button>
+          <button data-act="queue" title="Add to Queue">+Queue</button>
+          <button data-act="playlist" title="Add to Playlist">+List</button>
         </div>
-      </div>`).join("") + '</div>' +
+      </div>`;
+    }).join("") + '</div>' +
+    (hideLoadMore ? "" :
       '<div style="display:flex;justify-content:center;padding:28px 0 12px 0;">' +
         '<button id="btnLoadMore" class="btn-primary">Load More Songs</button>' +
-      '</div>';
+      '</div>');
   }
 
   $("content").addEventListener("click", (e) => {
@@ -2625,8 +2988,13 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
       const btn = e.target.closest("button[data-act]");
       const act = btn ? btn.dataset.act : "play";
       if (act === "play") window.Player.playSongs(currentSongs, i);
-      else if (act === "next") window.Player.playNext(song);
-      else if (act === "queue") window.Player.addToQueue(song);
+      else if (act === "like") {
+        toggleLikeSong(song);
+        if (btn) btn.classList.toggle("liked", isSongLiked(song));
+      } else if (act === "lyrics") {
+        window.Player.playSongs(currentSongs, i);
+        if (!$("lyricsBox").classList.contains("open")) window.toggleLyricsPanel();
+      } else if (act === "queue") window.Player.addToQueue(song);
       else if (act === "playlist") openAddToPlaylist(song);
       return;
     }
@@ -2654,16 +3022,13 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     if (btn) { btn.textContent = "Loading more songs..."; btn.disabled = true; }
     currentPage += 1;
     try {
-      const url = activeSearchQuery
-        ? "/api/search?q=" + encodeURIComponent(activeSearchQuery) + "&page=" + currentPage
-        : "/api/category/" + encodeURIComponent(currentCategory) + "&page=" + currentPage;
       const fixedUrl = activeSearchQuery
         ? "/api/search?q=" + encodeURIComponent(activeSearchQuery) + "&page=" + currentPage
         : "/api/category/" + encodeURIComponent(currentCategory) + "?page=" + currentPage;
       const data = await api(fixedUrl);
       const more = data.songs || [];
       if (more.length) {
-        renderSongs(more, true);
+        renderSongs(more, true, false);
         toast("Loaded " + more.length + " more songs");
       } else {
         toast("No more songs found");
@@ -2680,6 +3045,8 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     activeSearchQuery = "";
     currentPage = 1;
     openPlaylistId = null;
+    $("lyricsBox").classList.remove("open");
+    $("quickTilesSection").style.display = cat === "home" ? "block" : "none";
     document.querySelectorAll(".pill-btn").forEach((b) => b.classList.toggle("active", b.dataset.category === cat));
     document.querySelectorAll(".sidebar-playlists .playlist-item").forEach((p) => p.classList.remove("active"));
     const t = TITLES[cat] || [cat.charAt(0).toUpperCase() + cat.slice(1), ""];
@@ -2688,7 +3055,7 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     closeMobileMenu();
     try {
       const data = await api("/api/category/" + encodeURIComponent(cat) + "?page=1");
-      renderSongs(data.songs || [], false);
+      renderSongs(data.songs || [], false, false);
     } catch (err) {
       showError("Could not load songs: " + err.message);
     }
@@ -2699,12 +3066,14 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     openPlaylistId = null;
     activeSearchQuery = q;
     currentPage = 1;
+    $("lyricsBox").classList.remove("open");
+    $("quickTilesSection").style.display = "none";
     setHeading('Results for "' + q + '"', "Searching JioSaavn catalog...");
     showLoading("Searching JioSaavn...");
     try {
       const data = await api("/api/search?q=" + encodeURIComponent(q) + "&page=1");
       setHeading('Results for "' + q + '"', (data.count || 0) + " songs loaded (tap Load More for more)");
-      renderSongs(data.songs || [], false);
+      renderSongs(data.songs || [], false, false);
     } catch (err) {
       showError("Search failed: " + err.message);
     }
@@ -2715,7 +3084,7 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     const q = e.target.value.trim();
     searchTimer = setTimeout(() => {
       if (q) runSearch(q); else loadCategory(currentCategory);
-    }, 500);
+    }, 450);
   });
 
   document.querySelectorAll(".pill-btn").forEach((b) => {
@@ -2750,14 +3119,14 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     } catch (err) {}
 
     if (!localLists.length) {
-      box.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px 12px;">No playlists yet. Tap + to create one.</div>';
+      box.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px 12px;">No custom playlists yet. Tap + above to create one.</div>';
       return;
     }
     box.innerHTML = localLists.map((p) => {
       const count = Array.isArray(p.songs) ? Math.max(p.songs.length, p.song_count || 0) : (p.song_count || 0);
       return `
         <div class="playlist-item ${Number(p.id) === Number(openPlaylistId) ? "active" : ""}" data-id="${p.id}">
-          <span>${esc(p.name)}</span>
+          <span>🎵 ${esc(p.name)}</span>
           <span class="song-badge">${count}</span>
         </div>`;
     }).join("");
@@ -2769,19 +3138,21 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
   });
 
   function renderPlaylistContent(p) {
+    $("quickTilesSection").style.display = "none";
     currentSongs = p.songs || [];
     setHeading(p.name, p.description || (currentSongs.length + " songs"));
     let html = `
       <div class="playlist-controls-row" style="margin-bottom:18px;">
-        <button class="btn-primary" id="btnPlayAll">Play All</button>
+        <button class="btn-primary" id="btnPlayAll">▶ Play All</button>
         <button class="btn-danger" id="btnDeletePlaylist">Delete Playlist</button>
       </div>`;
     if (!currentSongs.length) {
-      html += '<div style="color:var(--text-muted);">This playlist is empty. Add songs using the "+ List" button on any song.</div>';
+      html += '<div style="color:var(--text-muted);">This playlist is empty. Add songs using the "+List" button on any song card.</div>';
     } else {
-      html += '<table class="track-table"><thead><tr><th>Title</th><th>Artist</th><th>Time</th><th></th></tr></thead><tbody>' +
+      html += '<table class="track-table"><thead><tr><th>#</th><th>Title</th><th>Artist</th><th>Time</th><th></th></tr></thead><tbody>' +
         currentSongs.map((s, i) => `
           <tr class="track-row" data-i="${i}" data-entry="${s.id}">
+            <td style="width:36px;">${i + 1}</td>
             <td><div class="track-title-cell"><img src="${esc(s.image_url)}" alt="" onerror="this.style.visibility='hidden'"><span>${esc(s.title)}</span></div></td>
             <td>${esc(s.artist)}</td>
             <td>${window.fmtTime(s.duration)}</td>
@@ -2794,6 +3165,7 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
   async function openPlaylist(id) {
     openPlaylistId = id;
     closeMobileMenu();
+    $("lyricsBox").classList.remove("open");
     document.querySelectorAll(".pill-btn").forEach((b) => b.classList.remove("active"));
     showLoading("Loading playlist...");
     const localLists = getLocalPlaylists();
@@ -2883,7 +3255,7 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     pendingSong = song;
     await loadPlaylists();
     const lists = getLocalPlaylists();
-    if (!lists.length) { toast("Create a playlist first (tap + in the menu)"); return; }
+    if (!lists.length) { toast("Create a playlist first (tap + in Your Library)"); return; }
     $("playlistSelect").innerHTML = lists.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
     openModal("addToPlaylistModal");
   }
@@ -2922,11 +3294,14 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     loadPlaylists();
   });
 
-  // ---------- Profile (name & age, no password) ----------
+  // ---------- Profile & Spotify Dynamic Time Greeting ----------
   function showProfile(p) {
     $("userNameDisplay").textContent = p.name;
-    $("userAgeDisplay").textContent = "Age " + p.age;
+    $("userAgeDisplay").textContent = "Age " + p.age + " • Spotify Free";
     $("userAvatar").textContent = p.name.trim().charAt(0).toUpperCase() || "M";
+    const hr = new Date().getHours();
+    const greet = hr < 12 ? "Good morning" : (hr < 17 ? "Good afternoon" : "Good evening");
+    if ($("greetingTitle")) $("greetingTitle").textContent = greet + ", " + p.name;
   }
 
   window.openProfileModal = function () {
@@ -2963,12 +3338,9 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
     else openModal("welcomeModal");
   }
 
-  // ---------- Mobile menu ----------
-  $("btnMobileMenu").addEventListener("click", () => {
-    document.querySelector(".sidebar").classList.toggle("mobile-open");
-  });
+  $("btnMobileMenu").addEventListener("click", window.toggleMobileSidebar);
 
-  // ---------- Start ----------
+  saveLikedSongs(getLikedSongs());
   initProfile();
   loadPlaylists();
   loadCategory("home");
@@ -2976,15 +3348,15 @@ APP_JS = r'''/* Musify - UI controller (discovery, search, playlists, profile) *
 '''
 
 MANIFEST_JSON = r'''{
-  "name": "Musify",
+  "name": "Musify • Spotify Edition",
   "short_name": "Musify",
-  "description": "Stream Telugu, Hindi, English and Punjabi music and create playlists",
+  "description": "Stream Telugu, Hindi, English and Punjabi music with live lyrics and playlists",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0f0f13",
-  "theme_color": "#0f0f13",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "icons": [
     { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
@@ -2992,7 +3364,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-v2";
+SW_JS = r'''const CACHE = "musify-spotify-v4";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
@@ -3016,7 +3388,6 @@ self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  // Never touch API calls or external audio/images
   if (url.origin !== location.origin || url.pathname.startsWith("/api/")) return;
   e.respondWith(
     fetch(req)
@@ -3236,12 +3607,15 @@ def saavn_album_route():
 
 
 @app.route("/lyrics/", methods=["GET"])
+@app.route("/api/lyrics", methods=["GET"])
 def saavn_lyrics_route():
-    query = request.args.get("query", "").strip()
-    if not query:
-        return jsonify({"status": False, "error": "Query containing song link or id is required to fetch lyrics!"})
+    query = (request.args.get("query") or request.args.get("id") or "").strip()
+    title = request.args.get("title", "").strip()
+    artist = request.args.get("artist", "").strip()
+    if not query and not title:
+        return jsonify({"status": False, "error": "Song ID or title is required to fetch lyrics!"})
     sid = get_song_id(query) if ("http" in query and "saavn" in query) else query
-    lyr = get_lyrics(sid)
+    lyr = get_lyrics(sid, title=title, artist=artist)
     return jsonify({"status": bool(lyr), "lyrics": lyr})
 
 
