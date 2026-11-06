@@ -338,7 +338,8 @@ lyrics_base_url = "https://www.jiosaavn.com/api.php?__call=lyrics.getLyrics&ctx=
 REQ_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
-    "Referer": "https://www.jiosaavn.com/"
+    "Referer": "https://www.jiosaavn.com/",
+    "Cookie": "L=telugu"
 }
 
 SAAVN_MIRRORS = [
@@ -840,19 +841,71 @@ def search_songs(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, A
 
 
 def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
-    """Fetches 40+ songs per page for Home, Telugu, Hindi, English, and Punjabi categories."""
+    """
+    Prioritizes Telugu songs first on Home/All, Telugu, Melodies, and Trending tabs,
+    fetching 40+ Telugu tracks per page from JioSaavn.
+    """
     cat = category.lower().strip()
     category_queries = {
-        "home": ["Latest Telugu Hindi Top Hits", "Trending India Songs", "Top Hits 2025"],
-        "trending": ["Trending Songs India", "Top Chartbusters", "Viral Hits"],
-        "telugu": ["Telugu Top Hits", "Sid Sriram Thaman DSP Telugu Songs", "Latest Telugu Movie Songs"],
-        "hindi": ["Hindi Top Hits", "Arijit Singh Pritam Bollywood Hits", "Latest Hindi Songs"],
-        "english": ["English Top Hits", "The Weeknd Ed Sheeran Taylor Swift Dua Lipa", "Pop Hits"],
-        "punjabi": ["Punjabi Top Hits", "AP Dhillon Diljit Dosanjh Karan Aujla", "Latest Punjabi Songs"]
+        "home": [
+            "Latest Telugu Hit Songs",
+            "Telugu Top Songs Sid Sriram Thaman DSP Mickey J Meyer",
+            "Telugu Blockbuster Movie Songs Anirudh",
+            "Feel Good Love Songs in Telugu",
+            "Telugu Evergreen Melodies"
+        ],
+        "telugu": [
+            "Telugu Top Hits Sid Sriram Thaman DSP",
+            "Latest Telugu Movie Songs Devara Pushpa Guntur Kaaram",
+            "Mickey J Meyer Anirudh Vivek Sagar Telugu Songs",
+            "Allu Arjun Prabhas Mahesh Babu Nani Telugu Hits",
+            "SP Balasubrahmanyam Chitra Telugu Melodies"
+        ],
+        "melodies": [
+            "Telugu Feel Good Love Songs Sid Sriram",
+            "Mickey J Meyer Sirivennela Telugu Melodies",
+            "AR Rahman Ilaiyaraaja Keeravani Telugu Songs",
+            "Anurag Kulkarni Shreya Ghoshal Telugu Songs"
+        ],
+        "trending": [
+            "Trending Telugu Songs",
+            "Telugu Viral Hits Mass Songs",
+            "Top Telugu Chartbusters"
+        ],
+        "hindi": [
+            "Hindi Top Hits",
+            "Arijit Singh Pritam Bollywood Hits",
+            "Latest Hindi Songs"
+        ],
+        "english": [
+            "English Top Hits",
+            "The Weeknd Ed Sheeran Taylor Swift Dua Lipa",
+            "Pop Hits"
+        ],
+        "punjabi": [
+            "Punjabi Top Hits",
+            "AP Dhillon Diljit Dosanjh Karan Aujla",
+            "Latest Punjabi Songs"
+        ]
     }
-    queries = category_queries.get(cat, [f"{cat} top songs"])
+    queries = category_queries.get(cat, [f"Telugu {cat} songs", f"{cat} top songs"])
     selected_q = queries[(page - 1) % len(queries)]
     sub_page = ((page - 1) // len(queries)) + 1
+
+    # On page 1 of 'home', combine the top 2 Telugu queries so the 8 quick tiles,
+    # 'It's New Music Friday!', 'Jump back in', and 'Recommended for today' are packed with Telugu hits
+    if cat in ("home", "all", "") and page == 1:
+        part1 = search_songs(queries[0], page=1, limit=25)
+        part2 = search_songs(queries[1], page=1, limit=25)
+        combined = []
+        seen_ids = set()
+        for s in (part1 + part2):
+            sid = s.get("id") or s.get("title")
+            if sid not in seen_ids:
+                seen_ids.add(sid)
+                combined.append(s)
+        if combined:
+            return combined
 
     results = search_songs(selected_q, page=sub_page, limit=40)
     return results if results else FALLBACK_CATALOG
@@ -872,14 +925,31 @@ INDEX_HTML = r'''<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta id="vpMeta" name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <script>
+    // If mobile browser has "Desktop site" enabled (reporting width >= 800 on a touch screen),
+    // automatically zoom/scale the document to fill 100% of the physical mobile screen!
+    (function() {
+      function enforceMobileScale() {
+        var isTouch = ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
+        if (isTouch && window.innerWidth >= 700 && screen.width < 600) {
+          var scale = (window.innerWidth / screen.width).toFixed(2);
+          document.documentElement.style.zoom = scale;
+        } else {
+          document.documentElement.style.zoom = "";
+        }
+      }
+      window.addEventListener("resize", enforceMobileScale);
+      enforceMobileScale();
+    })();
+  </script>
   <meta name="theme-color" content="#000000">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=6">
+  <link rel="stylesheet" href="/static/css/style.css?v=8">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -938,10 +1008,10 @@ INDEX_HTML = r'''<!DOCTYPE html>
       <header class="top-bar">
         <div id="topBarAvatar" class="top-avatar" onclick="openProfileModal()" title="Profile">P</div>
         <div class="category-pills">
-          <button class="pill-btn active" data-category="home">All</button>
-          <button class="pill-btn" data-category="telugu">Music</button>
-          <button class="pill-btn" data-category="trending">Podcasts</button>
-          <button class="pill-btn" data-category="telugu">Telugu</button>
+          <button class="pill-btn active" data-category="home">All (Telugu)</button>
+          <button class="pill-btn" data-category="telugu">Telugu Hits</button>
+          <button class="pill-btn" data-category="melodies">Telugu Melodies</button>
+          <button class="pill-btn" data-category="trending">Telugu Trending</button>
           <button class="pill-btn" data-category="hindi">Hindi</button>
           <button class="pill-btn" data-category="english">English</button>
           <button class="pill-btn" data-category="punjabi">Punjabi</button>
@@ -1300,20 +1370,20 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/player.js?v=6"></script>
-  <script src="/static/js/app.js?v=6"></script>
+  <script src="/static/js/player.js?v=8"></script>
+  <script src="/static/js/app.js?v=8"></script>
   <script>
     // Force-clear any old desktop cached assets from previous service workers
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-mobile-only-v6") caches.delete(k);
+          if (k !== "musify-telugu-first-v8") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=6").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=8").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -1372,12 +1442,18 @@ body {
   overflow: hidden;
 }
 
-/* --- Always Mobile App Layout (Even if Browser 'Desktop Site' is Checked) --- */
-.app-container {
-  max-width: 520px;
+/* --- Full-Bleed Edge-to-Edge Mobile Layout (Zero Black Sidebars) --- */
+html, body {
   width: 100%;
-  margin: 0 auto;
-  box-shadow: 0 0 40px rgba(0, 0, 0, 0.9);
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+.app-container {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  overflow-x: hidden;
 }
 
 /* Sidebar is ALWAYS a hidden slide-over mobile drawer (never a fixed desktop sidebar) */
@@ -1620,13 +1696,15 @@ body {
 /* 2-Column 8-Card Grid (Screenshot 70501.jpg) */
 .quick-tiles-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 24px;
+  width: 100%;
 }
 
 .quick-tile {
   display: flex;
+  min-width: 0;
   align-items: center;
   background-color: #262626;
   border-radius: 6px;
@@ -1753,6 +1831,8 @@ body {
 }
 
 .song-card {
+  min-width: 0;
+  overflow: hidden;
   background-color: #1a1a1a;
   border-radius: 8px;
   padding: 10px;
@@ -1799,6 +1879,11 @@ body {
   align-items: center;
   justify-content: center;
   box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+
+.card-info {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .card-title {
@@ -2721,22 +2806,30 @@ body {
   box-shadow: 0 6px 20px rgba(0,0,0,0.6);
 }
 
-/* Keep mini-player and bottom nav aligned to the mobile app frame on all screens */
+/* Full-width edge-to-edge mini-player, bottom nav, and 2-column equal grid */
 .mini-player {
-  max-width: 504px;
-  margin: 0 auto;
+  width: auto;
+  max-width: none;
   left: 8px;
   right: 8px;
 }
 
 .mobile-bottom-nav {
-  max-width: 520px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  left: 0;
+  right: 0;
 }
 
 .cards-grid {
-  grid-template-columns: repeat(2, 1fr) !important;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   gap: 12px;
+  width: 100%;
+}
+
+.np-stage-bottom, .np-below-fold {
+  max-width: 100%;
 }
 '''
 
@@ -3309,9 +3402,10 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
   let activeSearchQuery = "";
 
   const TITLES = {
-    home: ["Recommended for today", "Tap any song to open video canvas & lyrics"],
-    trending: ["Top Trending India", "Most streamed tracks today"],
-    telugu: ["Telugu Blockbusters", "Maestro, Ala Vaikunthapurramuloo, Pushpa & more"],
+    home: ["Telugu Hits • Recommended for Today", "Top Telugu songs prioritized first • Tap any song for video & lyrics"],
+    telugu: ["Telugu Blockbusters", "Sid Sriram, Thaman S, DSP, Mickey J. Meyer & Anirudh"],
+    melodies: ["Feel Good Telugu Melodies", "Sirivennela, Maestro, Geetha Govindam & love hits"],
+    trending: ["Trending Telugu Chartbusters", "Most streamed Telugu tracks right now"],
     hindi: ["Bollywood Top 50", "Arijit Singh, Pritam & chartbusters"],
     english: ["Global English Hits", "The Weeknd, Ed Sheeran & pop hits"],
     punjabi: ["Punjabi Party Anthems", "AP Dhillon, Diljit Dosanjh & more"]
@@ -3860,7 +3954,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-mobile-only-v6";
+SW_JS = r'''const CACHE = "musify-telugu-first-v8";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
