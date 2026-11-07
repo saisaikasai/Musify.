@@ -444,71 +444,73 @@ def _parse_saavn_json(raw_text: str) -> Any:
         return json.loads(re.sub(pattern, r"(From '\1')", raw_text))
 
 
+def _build_full_aac_urls(raw_url: str, is_320: bool = True) -> List[str]:
+    """
+    Converts any JioSaavn stream or preview URL into full-length aac.saavncdn.com streams ONLY
+    (_320.mp4, _160.mp4, _96.mp4, _48.mp4) — never 30-second preview.saavncdn.com (_96_p.mp4) clips!
+    """
+    if not raw_url:
+        return []
+    u = _ensure_https(raw_url).replace("//preview.saavncdn.com", "//aac.saavncdn.com").replace("_96_p.mp4", "_160.mp4")
+    bitrates = ["_320.mp4", "_160.mp4", "_96.mp4", "_48.mp4"] if is_320 else ["_160.mp4", "_96.mp4", "_320.mp4", "_48.mp4"]
+    urls = []
+    for br in bitrates:
+        for orig in ["_320.mp4", "_160.mp4", "_96.mp4", "_48.mp4", "_96_p.mp4"]:
+            if orig in u:
+                cand = u.replace(orig, br)
+                if cand not in urls:
+                    urls.append(cand)
+    if u not in urls:
+        urls.insert(0, u)
+    return urls
+
+
 def format_song(data: Dict[str, Any], lyrics: bool = False) -> Dict[str, Any]:
-    """Formats a raw JioSaavn song dictionary and decrypts its 320kbps/160kbps stream URL."""
-    is_320 = str(data.get("320kbps", "")).lower() == "true"
-    try:
-        media_url = decrypt_url(data["encrypted_media_url"])
-        if not is_320:
-            media_url = media_url.replace("_320.mp4", "_160.mp4")
-        preview_url = (
-            media_url.replace("_320.mp4", "_96_p.mp4")
-            .replace("_160.mp4", "_96_p.mp4")
-            .replace("//aac.", "//preview.")
-        )
-        data["media_url"] = _ensure_https(media_url)
-        data["media_preview_url"] = _ensure_https(preview_url)
-    except (KeyError, TypeError, Exception):
-        url = _ensure_https(data.get("media_preview_url", ""))
-        url = url.replace("preview", "aac")
-        if is_320:
-            url = url.replace("_96_p.mp4", "_320.mp4")
-        else:
-            url = url.replace("_96_p.mp4", "_160.mp4")
-        data["media_url"] = url
+    """Formats a raw JioSaavn song dictionary (v1 or v4) into full-length aac.saavncdn.com streams."""
+    more = data.get("more_info") if isinstance(data.get("more_info"), dict) else {}
+    is_320 = str(data.get("320kbps") or more.get("320kbps") or "").lower() == "true"
+    enc_url = data.get("encrypted_media_url") or more.get("encrypted_media_url") or ""
+    raw_prev = data.get("media_preview_url") or more.get("media_preview_url") or more.get("vlink") or ""
 
-    # Build ordered backup stream URLs (320 -> 160 -> 96 -> preview)
-    base_u = data.get("media_url", "")
-    backup_urls = []
-    if base_u:
-        backup_urls.append(base_u)
-        for br in ["_160.mp4", "_96.mp4", "_320.mp4"]:
-            for orig in ["_320.mp4", "_160.mp4", "_96.mp4", "_96_p.mp4"]:
-                if orig in base_u:
-                    cand = base_u.replace(orig, br).replace("preview.saavncdn.com", "aac.saavncdn.com")
-                    if cand not in backup_urls:
-                        backup_urls.append(cand)
-    if data.get("media_preview_url") and data["media_preview_url"] not in backup_urls:
-        backup_urls.append(data["media_preview_url"])
+    decrypted = ""
+    if enc_url:
+        try:
+            decrypted = decrypt_url(str(enc_url))
+        except Exception:
+            decrypted = ""
 
+    base_stream = decrypted or raw_prev
+    backup_urls = _build_full_aac_urls(base_stream, is_320=is_320)
+    data["media_url"] = backup_urls[0] if backup_urls else ""
     data["backup_urls"] = backup_urls
-    data["song"] = format_str(data.get("song") or data.get("title") or "Unknown Title")
-    data["music"] = format_str(data.get("music", ""))
-    data["singers"] = format_str(data.get("singers", ""))
-    data["starring"] = format_str(data.get("starring", ""))
-    data["album"] = format_str(data.get("album", ""))
-    data["primary_artists"] = format_str(data.get("primary_artists") or data.get("singers") or data.get("music") or "Various Artists")
-    data["image"] = _ensure_https(str(data.get("image", "")).replace("150x150", "500x500"))
 
-    # Also set standard Musify keys so both JioSaavnAPI and Musify UI work seamlessly
+    # Extract artist names cleanly from either v1 or v4 schema
+    artist_str = data.get("primary_artists") or data.get("singers") or more.get("music") or ""
+    if not artist_str and isinstance(more.get("artistMap"), dict):
+        prim = more["artistMap"].get("primary_artists") or more["artistMap"].get("artists") or []
+        if isinstance(prim, list) and prim:
+            artist_str = ", ".join([format_str(a.get("name", "")) for a in prim if isinstance(a, dict) and a.get("name")])
+
+    data["song"] = format_str(data.get("song") or data.get("title") or "Unknown Title")
+    data["music"] = format_str(data.get("music") or more.get("music") or "")
+    data["singers"] = format_str(data.get("singers") or artist_str or "")
+    data["starring"] = format_str(data.get("starring") or "")
+    data["album"] = format_str(data.get("album") or more.get("album") or "")
+    data["primary_artists"] = format_str(artist_str or data.get("subtitle") or "Various Artists")
+    data["image"] = _ensure_https(str(data.get("image", "")).replace("150x150", "500x500").replace("50x50", "500x500"))
+
     data["title"] = data["song"]
     data["artist"] = data["primary_artists"]
     data["image_url"] = data["image"]
     try:
-        data["duration"] = int(data.get("duration") or 210)
+        data["duration"] = int(data.get("duration") or more.get("duration") or 210)
     except (ValueError, TypeError):
         data["duration"] = 210
 
     if lyrics:
-        if str(data.get("has_lyrics", "")).lower() == "true":
-            data["lyrics"] = get_lyrics(data.get("id", ""))
-        else:
-            data["lyrics"] = None
+        has_l = str(data.get("has_lyrics") or more.get("has_lyrics") or "").lower() == "true"
+        data["lyrics"] = get_lyrics(data.get("id", ""), title=data["title"], artist=data["artist"]) if has_l else None
 
-    try:
-        data["copyright_text"] = str(data.get("copyright_text", "")).replace("&copy;", "©")
-    except Exception:
-        pass
     return data
 
 
@@ -790,32 +792,42 @@ def get_lyrics(song_id: str, title: str = "", artist: str = "") -> Optional[str]
 
 def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 40) -> Any:
     """
-    Searches JioSaavn using both search.getResults (paginated, up to 40 songs per page)
-    and autocomplete.get + song.getDetails from JioSaavnAPI-master, with strict deduplication.
+    Fetches full-length songs directly from JioSaavn:
+    1. JioSaavn v4 search.getResults (decrypts more_info.encrypted_media_url directly in 1 fast call!)
+    2. JioSaavn v1 search.getResults + autocomplete.get + batch song.getDetails fallback
     """
     clean_q = query.strip()
     if clean_q.startswith("http") and "saavn.com" in clean_q:
         sid = get_song_id(clean_q)
         return get_song(sid, lyrics) if sid else []
 
-    collected_ids = []
+    direct_songs: List[Dict[str, Any]] = []
+    fallback_ids: List[str] = []
 
-    # 1. Paginated search.getResults
+    # 1. Fast v4 search.getResults (includes encrypted_media_url directly in each result's more_info!)
     try:
-        sr_url = f"{search_results_base_url}&n={limit}&p={page}&q={urllib.parse.quote(clean_q)}"
-        sr_resp = requests.get(sr_url, headers=REQ_HEADERS, timeout=6)
-        sr_data = _parse_saavn_json(sr_resp.text)
-        if isinstance(sr_data, dict):
-            for item in sr_data.get("results", []):
-                if isinstance(item, dict) and item.get("id"):
-                    sid = str(item["id"])
-                    if sid not in collected_ids:
-                        collected_ids.append(sid)
+        v4_url = f"{search_results_base_url}&api_version=4&ctx=web6dot0&n={limit}&p={page}&q={urllib.parse.quote(clean_q)}"
+        v4_resp = requests.get(v4_url, headers=REQ_HEADERS, timeout=6)
+        v4_data = _parse_saavn_json(v4_resp.text)
+        if isinstance(v4_data, dict):
+            for item in v4_data.get("results", []):
+                if not isinstance(item, dict):
+                    continue
+                more = item.get("more_info") if isinstance(item.get("more_info"), dict) else {}
+                if more.get("encrypted_media_url") or item.get("encrypted_media_url") or more.get("vlink"):
+                    formatted = format_song(item, lyrics=lyrics)
+                    if formatted.get("media_url"):
+                        direct_songs.append(formatted)
+                elif item.get("id"):
+                    fallback_ids.append(str(item["id"]))
     except Exception as e:
-        logger.debug(f"search.getResults error: {e}")
+        logger.debug(f"v4 search.getResults error: {e}")
 
-    # 2. Autocomplete fallback on page 1
-    if page == 1 and len(collected_ids) < 15:
+    if direct_songs:
+        return _deduplicate_songs(direct_songs)
+
+    # 2. If v4 didn't have inline encrypted_media_url, use autocomplete.get + batch song.getDetails
+    if page == 1 and len(fallback_ids) < 15:
         try:
             ac_url = search_base_url + urllib.parse.quote(clean_q)
             ac_resp = requests.get(ac_url, headers=REQ_HEADERS, timeout=6)
@@ -825,13 +837,13 @@ def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, pag
                 return song_response
             for s in song_response:
                 sid = str(s.get("id", ""))
-                if sid and sid not in collected_ids:
-                    collected_ids.append(sid)
+                if sid and sid not in fallback_ids:
+                    fallback_ids.append(sid)
         except Exception as e:
             logger.debug(f"autocomplete.get error: {e}")
 
-    if collected_ids:
-        songs = get_songs_batch(collected_ids, lyrics=lyrics)
+    if fallback_ids:
+        songs = get_songs_batch(fallback_ids, lyrics=lyrics)
         if songs:
             return _deduplicate_songs(songs)
 
@@ -839,7 +851,7 @@ def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, pag
 
 
 def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
-    """Fallback to public JioSaavn mirrors with strict deduplication."""
+    """Fallback to public JioSaavn mirrors returning full-length aac.saavncdn.com streams."""
     for mirror in SAAVN_MIRRORS:
         url = f"{mirror}/search/songs?query={urllib.parse.quote(query)}&page={page}&limit={limit}"
         try:
@@ -856,16 +868,17 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Di
                     if not isinstance(raw, dict):
                         continue
                     dls = raw.get("downloadUrl") or []
-                    urls = []
+                    raw_urls = []
                     if isinstance(dls, list):
                         for d in reversed(dls):
                             u = d.get("url") or d.get("link") if isinstance(d, dict) else str(d)
                             if u:
-                                urls.append(_ensure_https(u))
+                                raw_urls.append(_ensure_https(u))
                     elif isinstance(dls, str):
-                        urls.append(_ensure_https(dls))
-                    if not urls:
+                        raw_urls.append(_ensure_https(dls))
+                    if not raw_urls:
                         continue
+                    urls = _build_full_aac_urls(raw_urls[0], is_320=True)
                     imgs = raw.get("image") or []
                     img_u = ""
                     if isinstance(imgs, list) and imgs:
@@ -897,178 +910,193 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Di
     return []
 
 
-def _search_itunes_india(query: str, limit: int = 25) -> List[Dict[str, Any]]:
-    """Queries official Apple iTunes India catalog (which has all 2026 OM Chapter 1 & Dhanush singles)."""
-    params = urllib.parse.urlencode({
-        "term": query,
-        "country": "IN",
-        "media": "music",
-        "entity": "song",
-        "limit": str(limit)
-    })
-    results = []
-    try:
-        resp = requests.get(f"{ITUNES_API}?{params}", headers=REQ_HEADERS, timeout=5)
-        if resp.status_code == 200:
-            for item in resp.json().get("results", []):
-                preview = _ensure_https(item.get("previewUrl", ""))
-                if not preview:
-                    continue
-                art = _ensure_https(item.get("artworkUrl100", "")).replace("100x100bb", "500x500bb")
-                dur_secs = int((item.get("trackTimeMillis") or 210000) / 1000)
-                results.append({
-                    "id": "it_" + str(item.get("trackId", "")),
-                    "title": item.get("trackName") or "Unknown Title",
-                    "artist": item.get("artistName") or "Various Artists",
-                    "album": item.get("collectionName") or "",
-                    "duration": dur_secs,
-                    "image_url": art or FALLBACK_CATALOG[0]["image_url"],
-                    "media_url": preview,
-                    "backup_urls": [preview, GUARANTEED_STREAMS[0]]
-                })
-    except Exception:
-        pass
-    return results
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def _normalize_user_query(q: str) -> List[str]:
-    """Expands queries like 'OM Chapter -1' or 'Dhanush' into exact album/song queries."""
+    """Expands user searches (including 'ed shareen', 'weeknd', 'om chapter -1', 'dhanush') into rich JioSaavn queries."""
     q_clean = re.sub(r"\s+", " ", q.strip())
     q_low = q_clean.lower()
-    expanded = [q_clean]
 
-    # Handle "OM Chapter -1" / "OM Chapter 1" / "Udhiram" / "Dhanush"
+    # Handle common spelling variations like "ed shareen" / "ed sheeran" / "weeknd" / "weekend"
+    if "shareen" in q_low or "sheeran" in q_low:
+        return [
+            "Ed Sheeran Shape of You Perfect",
+            "Ed Sheeran Bad Habits Photograph Thinking Out Loud",
+            "Ed Sheeran Sapphire Azizam Shivers"
+        ]
+    if "weeknd" in q_low or "weekend" in q_low:
+        return [
+            "The Weeknd Blinding Lights Starboy",
+            "The Weeknd Die For You Save Your Tears One Of The Girls",
+            "The Weeknd Timeless Popular Creepin Hills"
+        ]
     if "om" in q_low and ("chapter" in q_low or "1" in q_low or "udhiram" in q_low or "dhanush" in q_low):
-        expanded = [
+        return [
             "OM Chapter 1 Udhiram",
-            "Alaakaa Loova OM Chapter 1 Telugu",
-            "Veera Veera OM Chapter 1 Telugu",
-            "Senjudare Veezha Veera OM Chapter 1",
-            "The Wild Theme Siya Entry OM Chapter 1"
+            "Alaakaa Loova",
+            "Veera Veera OM Chapter 1",
+            "Veezha Veera OM Chapter 1",
+            "Senjudare OM Chapter 1",
+            "The Wild Theme OM Chapter 1",
+            "Siya Entry OM Chapter 1"
         ]
-    elif "dhanush" in q_low:
-        expanded = [
-            "OM Chapter 1 Udhiram Dhanush",
+    if "dhanush" in q_low:
+        return [
+            "OM Chapter 1 Udhiram",
             "Alaakaa Loova Veera Veera Senjudare",
-            "Dhanush Telugu Hits Tere Ishk Mein Idli Kadai Kuberaa",
-            q_clean
+            "Dhanush Telugu Songs",
+            "Tere Ishk Mein Idli Kadai Kuberaa Raayan Dhanush"
         ]
-    elif "-" in q_clean:
-        # Also try without hyphens (e.g. "OM Chapter -1" -> "OM Chapter 1")
+
+    expanded = [q_clean]
+    if "-" in q_clean:
         no_hyphen = re.sub(r"\s*-\s*", " ", q_clean).strip()
         if no_hyphen not in expanded:
             expanded.insert(0, no_hyphen)
-
     return expanded
 
 
+def _fetch_single_query(sub_q: str, page: int = 1, limit: int = 30) -> List[Dict[str, Any]]:
+    """Helper to fetch full-length JioSaavn tracks for a single query string."""
+    out: List[Dict[str, Any]] = []
+    saavn_songs = search_for_song(sub_q, lyrics=False, songdata=True, page=page, limit=limit)
+    if isinstance(saavn_songs, list) and saavn_songs:
+        out.extend(saavn_songs)
+    elif isinstance(saavn_songs, dict) and saavn_songs.get("media_url"):
+        out.append(saavn_songs)
+
+    if len(out) < 8:
+        mirror_songs = _search_saavn_mirrors(sub_q, page=page, limit=limit)
+        if mirror_songs:
+            out.extend(mirror_songs)
+    return out
+
+
+def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: int = 25) -> List[Dict[str, Any]]:
+    """Executes multiple JioSaavn queries concurrently in parallel threads while preserving query order."""
+    if not queries:
+        return []
+    ordered_buckets: List[List[Dict[str, Any]]] = [[] for _ in queries]
+    with ThreadPoolExecutor(max_workers=min(6, len(queries))) as pool:
+        future_map = {
+            pool.submit(_fetch_single_query, q_str, page, per_query_limit): idx
+            for idx, q_str in enumerate(queries)
+        }
+        for fut in as_completed(future_map):
+            idx = future_map[fut]
+            try:
+                ordered_buckets[idx] = fut.result() or []
+            except Exception:
+                ordered_buckets[idx] = []
+
+    merged: List[Dict[str, Any]] = []
+    for bucket in ordered_buckets:
+        merged.extend(bucket)
+    return _deduplicate_songs(merged)
+
+
 def search_songs(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
+    """
+    Searches ONLY full-length JioSaavn streams across expanded queries in parallel.
+    Never uses 30-second previews!
+    """
     clean_q = query.strip()
     if not clean_q:
         return get_category_songs("home", page=page)
 
     queries_to_run = _normalize_user_query(clean_q)
-    combined: List[Dict[str, Any]] = []
+    if len(queries_to_run) == 1:
+        res = _fetch_single_query(queries_to_run[0], page=page, limit=limit)
+        deduped = _deduplicate_songs(res)
+        return deduped if deduped else FALLBACK_CATALOG
 
-    for sub_q in queries_to_run:
-        # 1. Official JioSaavnAPI-master engine
-        saavn_songs = search_for_song(sub_q, lyrics=False, songdata=True, page=page, limit=limit)
-        if isinstance(saavn_songs, list) and saavn_songs:
-            combined.extend(saavn_songs)
-        elif isinstance(saavn_songs, dict) and saavn_songs.get("media_url"):
-            combined.append(saavn_songs)
-
-        # 2. Public Saavn Mirrors if direct returned few results
-        if len(combined) < 12:
-            mirror_songs = _search_saavn_mirrors(sub_q, page=page, limit=limit)
-            if mirror_songs:
-                combined.extend(mirror_songs)
-
-        # 3. Apple iTunes India catalog (ensures 100% coverage for brand-new 2026 singles like OM Chapter 1)
-        if len(combined) < 15 or "om" in sub_q.lower() or "dhanush" in sub_q.lower():
-            itunes_songs = _search_itunes_india(sub_q, limit=20)
-            if itunes_songs:
-                combined.extend(itunes_songs)
-
-    deduped = _deduplicate_songs(combined)
+    deduped = _parallel_fetch_queries(queries_to_run, page=page, per_query_limit=25)
     return deduped if deduped else FALLBACK_CATALOG
 
 
 def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     """
-    Prioritizes Telugu songs + new 2026 releases (including Dhanush's OM Chapter 1: Udhiram)
-    with strict deduplication so no song appears twice.
+    Fetches rich, full-length song catalogs in parallel:
+    - 'home' / 'all': Telugu Blockbusters first + Ed Sheeran & The Weeknd English Hits + New Hindi Hits
+    - 'telugu': All New & Trending Telugu Movie Songs (Pushpa 2, Devara, OM Chapter 1, Kalki, Guntur Kaaram, Game Changer)
+    - 'english': Ed Sheeran, The Weeknd, Dua Lipa, Taylor Swift, Justin Bieber, Coldplay, Alan Walker
+    - 'hindi': New & Popular Bollywood Hits (Arijit Singh, Stree 2, Bhool Bhulaiyaa 3, Animal, Jawan, Brahmastra)
     """
     cat = category.lower().strip()
     category_queries = {
         "home": [
-            "OM Chapter 1 Udhiram Telugu Alaakaa Loova Veera Veera",
-            "Latest Telugu Hit Songs Sid Sriram Thaman DSP",
-            "Telugu Top Songs Mickey J Meyer Anirudh",
-            "Feel Good Love Songs in Telugu",
-            "Telugu Evergreen Melodies"
+            "OM Chapter 1 Udhiram Alaakaa Loova Veera Veera",
+            "Latest Telugu Hit Songs Pushpa 2 Devara Guntur Kaaram Kalki",
+            "Telugu Top Songs Sid Sriram Thaman DSP Anirudh",
+            "Ed Sheeran Shape of You Perfect Bad Habits Photograph",
+            "The Weeknd Blinding Lights Starboy Die For You Save Your Tears",
+            "Latest Hindi Hit Songs Arijit Singh Stree 2 Animal Jawan Kesariya"
+        ],
+        "telugu": [
+            "Latest Telugu Hit Songs Pushpa 2 Devara Kalki Game Changer",
+            "OM Chapter 1 Udhiram Alaakaa Loova Veera Veera",
+            "Telugu Top Hits Sid Sriram Thaman DSP Anirudh",
+            "Guntur Kaaram Hi Nanna Salaar Hanuman Telugu Songs",
+            "Mickey J Meyer Sirivennela Feel Good Telugu Songs",
+            "Allu Arjun Prabhas Mahesh Babu Nani Jr NTR Telugu Hits"
         ],
         "om": [
             "OM Chapter 1 Udhiram",
-            "Alaakaa Loova Veera Veera Veezha Veera Senjudare",
-            "Dhanush Telugu Tamil New Songs Tere Ishk Mein Idli Kadai"
+            "Alaakaa Loova",
+            "Veera Veera OM Chapter 1",
+            "Veezha Veera OM Chapter 1",
+            "Senjudare OM Chapter 1",
+            "Dhanush Telugu Tamil Songs Tere Ishk Mein Idli Kadai Kuberaa"
         ],
-        "telugu": [
-            "OM Chapter 1 Udhiram Telugu Songs",
-            "Telugu Top Hits Sid Sriram Thaman DSP",
-            "Latest Telugu Movie Songs Devara Pushpa Guntur Kaaram",
-            "Mickey J Meyer Anirudh Vivek Sagar Telugu Songs",
-            "Allu Arjun Prabhas Mahesh Babu Nani Telugu Hits"
+        "english": [
+            "Ed Sheeran Shape of You Perfect Bad Habits Thinking Out Loud Photograph",
+            "The Weeknd Blinding Lights Starboy Save Your Tears Die For You Hills",
+            "The Weeknd One Of The Girls Timeless Creepin Popular",
+            "Dua Lipa Levitating Taylor Swift Cruel Summer Sabrina Carpenter Espresso",
+            "Coldplay Hymn For The Weekend Alan Walker Faded Justin Bieber Stay",
+            "Trending English Pop Songs Global Top Hits"
+        ],
+        "hindi": [
+            "Latest Hindi Songs Aaj Ki Raat Stree 2 Bhool Bhulaiyaa 3",
+            "Arijit Singh Top Hindi Songs Kesariya Chaleya Satranga Apna Bana Le",
+            "Animal Hindi Songs Arjan Vailly Pehle Bhi Main Abrars Entry",
+            "Pritam Vishal Shekhar Sachin Jigar Bollywood Top Hits",
+            "Tum Hi Ho Kabir Singh Shershaah Aashiqui 2 Hindi Hits",
+            "Trending Bollywood Songs New Hindi Releases"
         ],
         "melodies": [
             "Telugu Feel Good Love Songs Sid Sriram",
             "Mickey J Meyer Sirivennela Telugu Melodies",
             "AR Rahman Ilaiyaraaja Keeravani Telugu Songs",
-            "Anurag Kulkarni Shreya Ghoshal Telugu Songs"
+            "Anurag Kulkarni Shreya Ghoshal Chinmayi Telugu Songs"
         ],
         "trending": [
-            "OM Chapter 1 Udhiram Senjudare Veera Veera",
-            "Trending Telugu Songs",
-            "Telugu Viral Hits Mass Songs"
-        ],
-        "hindi": [
-            "Hindi Top Hits",
-            "Arijit Singh Pritam Bollywood Hits",
-            "Latest Hindi Songs"
-        ],
-        "english": [
-            "English Top Hits",
-            "The Weeknd Ed Sheeran Taylor Swift Dua Lipa",
-            "Pop Hits"
+            "OM Chapter 1 Udhiram Alaakaa Loova Veera Veera",
+            "Pushpa 2 Devara Trending Telugu Songs",
+            "The Weeknd Blinding Lights Starboy Ed Sheeran Shape of You",
+            "Trending Hindi Songs Arijit Singh Aaj Ki Raat Chaleya"
         ],
         "punjabi": [
-            "Punjabi Top Hits",
-            "AP Dhillon Diljit Dosanjh Karan Aujla",
-            "Latest Punjabi Songs"
+            "Punjabi Top Hits AP Dhillon Excuses Brown Munde",
+            "Diljit Dosanjh Karan Aujla Tauba Tauba Softly",
+            "Shubh Cheques One Love King Shit Punjabi Songs"
         ]
     }
-    queries = category_queries.get(cat, [f"Telugu {cat} songs", f"{cat} top songs"])
-    selected_q = queries[(page - 1) % len(queries)]
-    sub_page = ((page - 1) // len(queries)) + 1
 
-    if cat in ("home", "all", "") and page == 1:
-        part1 = search_songs(queries[0], page=1, limit=20)
-        part2 = search_songs(queries[1], page=1, limit=25)
-        part3 = search_songs(queries[2], page=1, limit=20)
-        combined = _deduplicate_songs(part1 + part2 + part3)
+    queries = category_queries.get(cat, [f"Telugu {cat} songs", f"{cat} top songs"])
+
+    # On page 1, run all queries for the selected category in parallel so the user gets 60-90+ full songs immediately!
+    if page == 1:
+        combined = _parallel_fetch_queries(queries, page=1, per_query_limit=20)
         if combined:
             return combined
 
-    if cat == "om" and page == 1:
-        p1 = search_songs(queries[0], page=1, limit=25)
-        p2 = search_songs(queries[1], page=1, limit=25)
-        p3 = search_songs(queries[2], page=1, limit=20)
-        comb = _deduplicate_songs(p1 + p2 + p3)
-        if comb:
-            return comb
-
-    results = search_songs(selected_q, page=sub_page, limit=40)
-    return _deduplicate_songs(results) if results else FALLBACK_CATALOG
+    # On subsequent pages ("Load More Songs"), cycle through the category queries with higher page numbers
+    selected_q = queries[(page - 1) % len(queries)]
+    sub_page = ((page - 1) // len(queries)) + 1
+    results = _parallel_fetch_queries([selected_q, queries[page % len(queries)]], page=sub_page, per_query_limit=30)
+    return results if results else FALLBACK_CATALOG
 
 
 # =====================================================================
@@ -1114,7 +1142,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=11">
+  <link rel="stylesheet" href="/static/css/style.css?v=14">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1173,13 +1201,13 @@ INDEX_HTML = r'''<!DOCTYPE html>
       <header class="top-bar">
         <div id="topBarAvatar" class="top-avatar" onclick="openProfileModal()" title="Profile">P</div>
         <div class="category-pills">
-          <button class="pill-btn active" data-category="home">All (Telugu)</button>
+          <button class="pill-btn active" data-category="home">All</button>
+          <button class="pill-btn" data-category="telugu">Telugu New</button>
           <button class="pill-btn" data-category="om">OM • Dhanush</button>
-          <button class="pill-btn" data-category="telugu">Telugu Hits</button>
+          <button class="pill-btn" data-category="english">English • Weeknd & Ed</button>
+          <button class="pill-btn" data-category="hindi">Hindi Hits</button>
           <button class="pill-btn" data-category="melodies">Telugu Melodies</button>
-          <button class="pill-btn" data-category="trending">Telugu Trending</button>
-          <button class="pill-btn" data-category="hindi">Hindi</button>
-          <button class="pill-btn" data-category="english">English</button>
+          <button class="pill-btn" data-category="trending">Trending</button>
           <button class="pill-btn" data-category="punjabi">Punjabi</button>
         </div>
       </header>
@@ -1196,21 +1224,27 @@ INDEX_HTML = r'''<!DOCTYPE html>
       <!-- Scrollable Home & Discovery Content -->
       <section class="content-scroll" id="contentScroll">
 
-        <!-- Home Exclusive Sections (2x4 Grid + Carousels from Screenshot 70501.jpg) -->
+        <!-- Home Exclusive Sections (2x4 Grid + Telugu, English & Hindi Carousels) -->
         <div id="homeHeroSections">
           <!-- 8 Compact 2-Column Rectangular Tiles -->
           <div id="quickTilesGrid" class="quick-tiles-grid"></div>
 
-          <!-- Horizontal Carousel 1: It's New Music Friday! -->
+          <!-- Horizontal Carousel 1: New Telugu & OM Chapter 1 Hits -->
           <div class="home-section">
-            <h2 class="section-title">It's New Music Friday!</h2>
+            <h2 class="section-title">New Telugu & OM Chapter 1 Hits</h2>
             <div id="newMusicRow" class="horiz-scroll-row"></div>
           </div>
 
-          <!-- Horizontal Carousel 2: Jump back in -->
+          <!-- Horizontal Carousel 2: Ed Sheeran, The Weeknd & Trending English -->
           <div class="home-section">
-            <h2 class="section-title">Jump back in</h2>
+            <h2 class="section-title">Ed Sheeran, The Weeknd & English Hits</h2>
             <div id="jumpBackRow" class="horiz-scroll-row"></div>
+          </div>
+
+          <!-- Horizontal Carousel 3: New & Trending Hindi Chartbusters -->
+          <div class="home-section">
+            <h2 class="section-title">Trending Hindi Chartbusters</h2>
+            <div id="hindiHeroRow" class="horiz-scroll-row"></div>
           </div>
         </div>
 
@@ -1536,20 +1570,20 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/player.js?v=11"></script>
-  <script src="/static/js/app.js?v=11"></script>
+  <script src="/static/js/player.js?v=14"></script>
+  <script src="/static/js/app.js?v=14"></script>
   <script>
     // Force-clear any old desktop cached assets from previous service workers
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-backtoback-om-v11") caches.delete(k);
+          if (k !== "musify-all-langs-v14") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=11").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=14").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -3099,17 +3133,19 @@ PLAYER_JS = r'''/* =============================================================
     const raw = [song.media_url].concat(song.backup_urls || []);
     const expanded = [];
     raw.forEach((u) => {
-      const clean = ensureHttps(u);
+      let clean = ensureHttps(u);
       if (!clean) return;
-      if (!expanded.includes(clean)) expanded.push(clean);
-      ["_320.mp4", "_160.mp4", "_96.mp4"].forEach((br) => {
-        ["_320.mp4", "_160.mp4", "_96.mp4", "_96_p.mp4"].forEach((orig) => {
+      // Always upgrade any 30s preview.saavncdn.com (_96_p.mp4) link to full-length aac.saavncdn.com!
+      clean = clean.replace("//preview.saavncdn.com", "//aac.saavncdn.com").replace("_96_p.mp4", "_160.mp4");
+      ["_160.mp4", "_320.mp4", "_96.mp4", "_48.mp4"].forEach((br) => {
+        ["_320.mp4", "_160.mp4", "_96.mp4", "_48.mp4", "_96_p.mp4"].forEach((orig) => {
           if (clean.includes(orig)) {
-            const v = clean.replace(orig, br).replace("preview.saavncdn.com", "aac.saavncdn.com");
+            const v = clean.replace(orig, br);
             if (!expanded.includes(v)) expanded.push(v);
           }
         });
       });
+      if (!expanded.includes(clean)) expanded.push(clean);
     });
     expanded.push("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3");
     return expanded;
@@ -3135,7 +3171,7 @@ PLAYER_JS = r'''/* =============================================================
     return state.queue[state.index] || null;
   }
 
-  // ---- Background Canvas Video Controller ----
+  // ---- Background Canvas Video Controller (Pauses video when app is in background so audio never stops!) ----
   function updateCanvasVideo(song) {
     if (!song) return;
     const img = ensureHttps(song.image_url);
@@ -3150,10 +3186,14 @@ PLAYER_JS = r'''/* =============================================================
     if (canvasVideo.getAttribute("data-src") !== videoUrl) {
       canvasVideo.setAttribute("data-src", videoUrl);
       canvasVideo.src = videoUrl;
-      canvasVideo.load();
+      if (!document.hidden) {
+        try { canvasVideo.load(); } catch (e) {}
+      }
     }
-    const p = canvasVideo.play();
-    if (p && p.catch) p.catch(() => {});
+    if (!document.hidden && state.wantPlaying) {
+      const p = canvasVideo.play();
+      if (p && p.catch) p.catch(() => {});
+    }
   }
 
   // ---- Voice-Synced Karaoke Lyrics Resolver & Auto-Highlighter ----
@@ -3388,21 +3428,27 @@ PLAYER_JS = r'''/* =============================================================
     }
   }
 
+  state.wantPlaying = false;
+  state.lastVisibilityChange = 0;
+
   function startAudio() {
     const s = current();
     if (!s) return;
+    state.wantPlaying = true;
     const urls = urlsFor(s);
     const chosenUrl = urls[Math.min(state.urlTry, urls.length - 1)];
     audio.autoplay = true;
     audio.src = chosenUrl;
-    try { audio.load(); } catch (e) {}
     const p = audio.play();
     if (p && p.catch) {
       p.catch(() => {
         setTimeout(() => {
-          audio.play().catch(() => {});
-        }, 180);
+          if (state.wantPlaying) audio.play().catch(() => {});
+        }, 150);
       });
+    }
+    if ("mediaSession" in navigator) {
+      try { navigator.mediaSession.playbackState = "playing"; } catch (e) {}
     }
   }
 
@@ -3452,14 +3498,23 @@ PLAYER_JS = r'''/* =============================================================
       return;
     }
     if (!audio.src) { startAudio(); return; }
-    if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+    if (audio.paused) {
+      state.wantPlaying = true;
+      audio.play().catch(() => {});
+    } else {
+      state.wantPlaying = false;
+      audio.pause();
+    }
   }
 
   function setPlayIcon(playing) {
     if ($("btnPlay")) $("btnPlay").innerHTML = playing ? ICON_PAUSE_MINI : ICON_PLAY_MINI;
     if ($("btnNpPlay")) $("btnNpPlay").innerHTML = playing ? ICON_PAUSE_BIG : ICON_PLAY_BIG;
+    if ("mediaSession" in navigator) {
+      try { navigator.mediaSession.playbackState = playing ? "playing" : "paused"; } catch (e) {}
+    }
     if (canvasVideo) {
-      if (playing) canvasVideo.play().catch(() => {});
+      if (playing && !document.hidden) canvasVideo.play().catch(() => {});
       else canvasVideo.pause();
     }
   }
@@ -3598,13 +3653,61 @@ PLAYER_JS = r'''/* =============================================================
     setPlayIcon(true);
   });
   audio.addEventListener("pause", () => {
-    setPlayIcon(false);
-    // If AAC stream auto-paused within 1.2s of track end, immediately advance to next song!
+    // 1. If AAC stream auto-paused within 1.2s of track end, immediately advance to next song!
     if (audio.duration > 15 && (audio.duration - audio.currentTime) <= 1.2 && !state._advancing) {
       state._advancing = true;
       next(true);
+      return;
+    }
+    // 2. If Android OS briefly paused <audio> when pressing the Home button while wantPlaying is true, auto-resume!
+    if (state.wantPlaying && (document.hidden || (Date.now() - state.lastVisibilityChange < 1500))) {
+      setTimeout(() => {
+        if (state.wantPlaying && audio.paused) {
+          audio.play().catch(() => {});
+        }
+      }, 60);
+      return;
+    }
+    setPlayIcon(false);
+  });
+
+  // ---- Background Home Play vs. Recent Apps Close Handler ----
+  document.addEventListener("visibilitychange", () => {
+    state.lastVisibilityChange = Date.now();
+    if (document.hidden) {
+      // Going to Home screen or switching apps: pause the background <video> so Android keeps <audio> playing!
+      if (canvasVideo) {
+        try { canvasVideo.pause(); } catch (e) {}
+      }
+      if (state.wantPlaying && audio.paused) {
+        audio.play().catch(() => {});
+      }
+    } else {
+      // Returned to Musify app: resume background video if song is playing
+      if (state.wantPlaying && !audio.paused && canvasVideo) {
+        canvasVideo.play().catch(() => {});
+      }
     }
   });
+
+  function stopAudioOnAppTermination() {
+    // Fired when the app is swiped away / closed from Android Recent Apps
+    state.wantPlaying = false;
+    try {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      if (canvasVideo) canvasVideo.pause();
+      if ("mediaSession" in navigator) {
+        navigator.mediaSession.playbackState = "none";
+        navigator.mediaSession.metadata = null;
+      }
+    } catch (e) {}
+  }
+
+  window.addEventListener("pagehide", stopAudioOnAppTermination);
+  window.addEventListener("beforeunload", stopAudioOnAppTermination);
+  window.addEventListener("unload", stopAudioOnAppTermination);
   audio.addEventListener("ended", () => {
     if (!state._advancing) {
       state._advancing = true;
@@ -3623,6 +3726,16 @@ PLAYER_JS = r'''/* =============================================================
 
       // Highlight exact voice-synced lyric line & auto-scroll lyrics card
       syncLyricsToTime(audio.currentTime);
+
+      if ("mediaSession" in navigator && navigator.mediaSession.setPositionState) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: audio.duration,
+            playbackRate: audio.playbackRate || 1,
+            position: Math.min(audio.duration, audio.currentTime)
+          });
+        } catch (e) {}
+      }
 
       // Back-to-back EOF watchdog: if within 0.35s of end of track, advance seamlessly
       if (audio.duration > 15 && (audio.duration - audio.currentTime) <= 0.35 && !state._advancing) {
@@ -3645,10 +3758,10 @@ PLAYER_JS = r'''/* =============================================================
       s._resolvedFresh = true;
       try {
         const q = encodeURIComponent((s.title || "") + " " + (s.artist || ""));
-        const r = await fetch("https://itunes.apple.com/search?term=" + q + "&country=IN&media=music&entity=song&limit=3");
+        const r = await fetch("/api/search?q=" + q);
         const j = await r.json();
-        if (j.results && j.results[0] && j.results[0].previewUrl) {
-          audio.src = ensureHttps(j.results[0].previewUrl);
+        if (j.songs && j.songs[0] && j.songs[0].media_url) {
+          audio.src = ensureHttps(j.songs[0].media_url);
           audio.play().catch(() => {});
           return;
         }
@@ -3695,8 +3808,17 @@ PLAYER_JS = r'''/* =============================================================
 
   if ("mediaSession" in navigator) {
     try {
-      navigator.mediaSession.setActionHandler("play", toggle);
-      navigator.mediaSession.setActionHandler("pause", toggle);
+      navigator.mediaSession.setActionHandler("play", () => {
+        state.wantPlaying = true;
+        audio.play().catch(() => {});
+      });
+      navigator.mediaSession.setActionHandler("pause", () => {
+        state.wantPlaying = false;
+        audio.pause();
+      });
+      navigator.mediaSession.setActionHandler("stop", () => {
+        stopAudioOnAppTermination();
+      });
       navigator.mediaSession.setActionHandler("nexttrack", () => next(false));
       navigator.mediaSession.setActionHandler("previoustrack", prev);
     } catch (e) {}
@@ -3724,14 +3846,14 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
   let activeSearchQuery = "";
 
   const TITLES = {
-    home: ["Telugu Hits • Recommended for Today", "OM Chapter 1 & Top Telugu songs • Plays back-to-back"],
+    home: ["All Popular & Trending Songs", "Full-length Telugu, Ed Sheeran, The Weeknd & Hindi hits • Back-to-back play"],
+    telugu: ["New & Trending Telugu Blockbusters", "Pushpa 2, Devara, OM Chapter 1, Kalki, Guntur Kaaram, Sid Sriram & Thaman"],
     om: ["OM Chapter 1: Udhiram • Dhanush", "Alaakaa Loova, Veera Veera, Veezha Veera, Senjudare & Dhanush hits"],
-    telugu: ["Telugu Blockbusters", "Sid Sriram, Thaman S, DSP, Mickey J. Meyer & Anirudh"],
+    english: ["Ed Sheeran, The Weeknd & English Hits", "Blinding Lights, Shape of You, Starboy, Perfect, Die For You & global pop"],
+    hindi: ["New & Trending Hindi Blockbusters", "Arijit Singh, Stree 2, Bhool Bhulaiyaa 3, Animal, Jawan & Bollywood hits"],
     melodies: ["Feel Good Telugu Melodies", "Sirivennela, Maestro, Geetha Govindam & love hits"],
-    trending: ["Trending Telugu Chartbusters", "Most streamed Telugu tracks right now"],
-    hindi: ["Bollywood Top 50", "Arijit Singh, Pritam & chartbusters"],
-    english: ["Global English Hits", "The Weeknd, Ed Sheeran & pop hits"],
-    punjabi: ["Punjabi Party Anthems", "AP Dhillon, Diljit Dosanjh & more"]
+    trending: ["Top Viral & Trending Songs", "Telugu, English & Hindi chartbusters"],
+    punjabi: ["Punjabi Party Anthems", "AP Dhillon, Diljit Dosanjh & Karan Aujla"]
   };
 
   function getLikedSongs() {
@@ -3836,7 +3958,7 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     runSearch(q);
   };
 
-  // ---- Populate 2x4 Top Grid & Carousels (Screenshot 70501.jpg) ----
+  // ---- Populate 2x4 Top Grid + Telugu, English (Weeknd/Ed Sheeran) & Hindi Carousels ----
   function renderHomeHeroSections(songs) {
     if (!songs || !songs.length) return;
     const top8 = songs.slice(0, 8);
@@ -3848,28 +3970,66 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
         </div>`).join("");
     }
 
-    const row1 = songs.slice(8, 18);
-    if ($("newMusicRow") && row1.length) {
-      $("newMusicRow").innerHTML = row1.map((s, idx) => `
-        <div class="horiz-card" data-hero-i="${idx + 8}">
+    // Separate English (Weeknd / Ed Sheeran), Hindi, and Telugu slices for the 3 carousels
+    const englishIndices = [];
+    const hindiIndices = [];
+    const teluguIndices = [];
+
+    songs.forEach((s, idx) => {
+      if (idx < 8) return;
+      const hay = ((s.title || "") + " " + (s.artist || "") + " " + (s.album || "")).toLowerCase();
+      if (/sheeran|weeknd|dua lipa|taylor|coldplay|bieber|alan walker|sabrina|blinding|starboy|shape of you/.test(hay)) {
+        englishIndices.push(idx);
+      } else if (/arijit|pritam|stree|animal|jawan|kesariya|chaleya|vishal|sachin|bollywood|aashiqui|kabir/.test(hay)) {
+        hindiIndices.push(idx);
+      } else {
+        teluguIndices.push(idx);
+      }
+    });
+
+    const rowTelugu = teluguIndices.length ? teluguIndices.slice(0, 12) : songs.slice(8, 18).map((_, i) => i + 8);
+    if ($("newMusicRow")) {
+      $("newMusicRow").innerHTML = rowTelugu.map((songIdx) => {
+        const s = songs[songIdx];
+        return `
+        <div class="horiz-card" data-hero-i="${songIdx}">
           <div class="horiz-card-img-wrap">
             <img src="${esc(s.image_url)}" alt="" loading="lazy">
             <div class="spotify-corner-badge">♪</div>
           </div>
           <div class="horiz-card-sub">${esc(s.title)} • ${esc(s.artist)}</div>
-        </div>`).join("");
+        </div>`;
+      }).join("");
     }
 
-    const row2 = songs.slice(18, 28);
-    if ($("jumpBackRow") && row2.length) {
-      $("jumpBackRow").innerHTML = row2.map((s, idx) => `
-        <div class="horiz-card" data-hero-i="${idx + 18}">
+    const rowEng = englishIndices.length ? englishIndices.slice(0, 12) : songs.slice(18, 28).map((_, i) => i + 18);
+    if ($("jumpBackRow")) {
+      $("jumpBackRow").innerHTML = rowEng.map((songIdx) => {
+        const s = songs[songIdx];
+        return `
+        <div class="horiz-card" data-hero-i="${songIdx}">
           <div class="horiz-card-img-wrap">
             <img src="${esc(s.image_url)}" alt="" loading="lazy">
             <div class="spotify-corner-badge">♪</div>
           </div>
-          <div class="horiz-card-sub">${esc(s.album || s.title)} • ${esc(s.artist)}</div>
-        </div>`).join("");
+          <div class="horiz-card-sub">${esc(s.title)} • ${esc(s.artist)}</div>
+        </div>`;
+      }).join("");
+    }
+
+    const rowHin = hindiIndices.length ? hindiIndices.slice(0, 12) : songs.slice(28, 38).map((_, i) => i + 28);
+    if ($("hindiHeroRow")) {
+      $("hindiHeroRow").innerHTML = rowHin.map((songIdx) => {
+        const s = songs[songIdx];
+        return `
+        <div class="horiz-card" data-hero-i="${songIdx}">
+          <div class="horiz-card-img-wrap">
+            <img src="${esc(s.image_url)}" alt="" loading="lazy">
+            <div class="spotify-corner-badge">♪</div>
+          </div>
+          <div class="horiz-card-sub">${esc(s.title)} • ${esc(s.artist)}</div>
+        </div>`;
+      }).join("");
     }
   }
 
@@ -4299,7 +4459,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-backtoback-om-v11";
+SW_JS = r'''const CACHE = "musify-all-langs-v14";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
