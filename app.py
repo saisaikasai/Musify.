@@ -1142,7 +1142,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=14">
+  <link rel="stylesheet" href="/static/css/style.css?v=15">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1303,16 +1303,23 @@ INDEX_HTML = r'''<!DOCTYPE html>
 
       <!-- Top Header inside Full-Screen Player -->
       <div class="np-top-bar">
-        <button class="np-icon-btn" onclick="closeNowPlayingSheet()" title="Minimize">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg>
+        <button class="np-icon-btn" onclick="closeNowPlayingSheet()" title="Back to Musify Home" style="background:rgba(0,0,0,0.4);padding:6px 12px;border-radius:99px;font-size:12.5px;font-weight:700;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          <span>Home</span>
         </button>
         <div class="np-top-center">
           <div class="np-top-sub">Based on your interest in</div>
           <div id="npAlbumHeader" class="np-top-album">Maestro</div>
         </div>
-        <button class="np-icon-btn" onclick="openAddToPlaylistCurrent()" title="Add to Playlist">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-        </button>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button class="np-icon-btn" onclick="downloadCurrentSong()" title="Download Full Song" style="background:rgba(29,185,84,0.22);border:1px solid var(--accent);padding:6px 11px;border-radius:99px;font-size:12px;font-weight:800;color:var(--accent);">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Download</span>
+          </button>
+          <button class="np-icon-btn" onclick="openAddToPlaylistCurrent()" title="Add to Playlist">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          </button>
+        </div>
       </div>
 
       <!-- Clean video stage (no middle banner blocking the video) -->
@@ -1373,12 +1380,16 @@ INDEX_HTML = r'''<!DOCTYPE html>
           </button>
         </div>
 
-        <!-- Secondary Bottom Actions Row (Speaker, Share, Queue) -->
+        <!-- Secondary Bottom Actions Row (Lyrics, Download, Share, Queue) -->
         <div class="np-sub-actions">
-          <button class="np-icon-btn" onclick="scrollToLyricsCard()" title="Lyrics & Info">
+          <button class="np-icon-btn" onclick="scrollToLyricsCard()" title="Lyrics & Info" style="font-size:12px;font-weight:700;gap:6px;">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="12" cy="12" r="3"/></svg>
+            <span>Lyrics</span>
           </button>
-          <div style="display:flex; gap:20px;">
+          <div style="display:flex; gap:18px; align-items:center;">
+            <button class="np-icon-btn" onclick="downloadCurrentSong()" title="Download Song">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
             <button class="np-icon-btn" onclick="shareCurrentSong()" title="Share Song">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
             </button>
@@ -1570,20 +1581,20 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/player.js?v=14"></script>
-  <script src="/static/js/app.js?v=14"></script>
+  <script src="/static/js/player.js?v=15"></script>
+  <script src="/static/js/app.js?v=15"></script>
   <script>
     // Force-clear any old desktop cached assets from previous service workers
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-all-langs-v14") caches.delete(k);
+          if (k !== "musify-dl-backguard-v15") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=14").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=15").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -3552,14 +3563,112 @@ PLAYER_JS = r'''/* =============================================================
   attachSwipeGesture($("miniPlayer"));
   attachSwipeGesture($("npSwipeZone"));
 
-  // ---- Full-Screen Sheet Helpers ----
+  // ---- Full-Screen Sheet Helpers & Android Back Button Guard (Returns to Musify Home, Never Exits App!) ----
+  try {
+    if (!history.state || !history.state.musifyBase) {
+      history.replaceState({ musifyBase: true, view: "home" }, "", location.pathname);
+    }
+  } catch (e) {}
+
   window.openNowPlayingSheet = function () {
-    $("nowPlayingSheet").classList.add("open");
-    if (canvasVideo && !audio.paused) canvasVideo.play().catch(() => {});
+    const sheet = $("nowPlayingSheet");
+    const wasOpen = sheet.classList.contains("open");
+    sheet.classList.add("open");
+    if (canvasVideo && !audio.paused && !document.hidden) {
+      canvasVideo.play().catch(() => {});
+    }
+    if (!wasOpen) {
+      try {
+        history.pushState({ musifyBase: true, view: "nowPlaying" }, "", "#playing");
+      } catch (e) {}
+    }
   };
 
-  window.closeNowPlayingSheet = function () {
-    $("nowPlayingSheet").classList.remove("open");
+  window.closeNowPlayingSheet = function (fromPopState) {
+    const sheet = $("nowPlayingSheet");
+    if (!sheet.classList.contains("open")) return;
+    sheet.classList.remove("open");
+    sheet.scrollTo({ top: 0, behavior: "instant" });
+    if ($("lyricsContent")) $("lyricsContent").classList.remove("expanded");
+    if ($("btnExpandLyrics")) $("btnExpandLyrics").textContent = "Show lyrics";
+    if (!fromPopState && location.hash === "#playing") {
+      try { history.back(); } catch (e) {}
+    }
+  };
+
+  window.addEventListener("popstate", (e) => {
+    // 1. If Queue drawer is open, close it and stay in Musify
+    if ($("queuePanel") && $("queuePanel").classList.contains("open")) {
+      $("queuePanel").classList.remove("open");
+      try { history.pushState({ musifyBase: true, view: "home" }, "", location.pathname); } catch (err) {}
+      return;
+    }
+    // 2. If Full-Screen Now Playing / Lyrics sheet is open, close it and return to Musify App Home!
+    if ($("nowPlayingSheet") && $("nowPlayingSheet").classList.contains("open")) {
+      window.closeNowPlayingSheet(true);
+      try { history.pushState({ musifyBase: true, view: "home" }, "", location.pathname); } catch (err) {}
+      return;
+    }
+    // 3. If Library sidebar drawer is open, close it and stay on Musify Home
+    if ($("sidebar") && $("sidebar").classList.contains("mobile-open")) {
+      $("sidebar").classList.remove("mobile-open");
+      try { history.pushState({ musifyBase: true, view: "home" }, "", location.pathname); } catch (err) {}
+      return;
+    }
+    // 4. Keep a protective history state so pressing Back returns to Musify Home tab
+    if (window.loadCategory) {
+      try { history.pushState({ musifyBase: true, view: "home" }, "", location.pathname); } catch (err) {}
+    }
+  });
+
+  // ---- Full-Length Song Downloader (Downloads without pausing playback) ----
+  window.downloadSongObj = async function (song) {
+    if (!song || !song.media_url) {
+      toast("Select a song first to download");
+      return;
+    }
+    const cleanTitle = (song.title || "Song").replace(/[\\/*?:"<>|]+/g, "").trim();
+    const cleanArtist = (song.artist || "").split(",")[0].replace(/[\\/*?:"<>|]+/g, "").trim();
+    const fileName = (cleanArtist ? `${cleanTitle} - ${cleanArtist}` : cleanTitle) + ".m4a";
+
+    toast("⬇ Downloading: " + cleanTitle + "...");
+    const dlUrl = `/api/download?url=${encodeURIComponent(song.media_url)}&id=${encodeURIComponent(song.id || "")}&title=${encodeURIComponent(song.title || "")}&artist=${encodeURIComponent(song.artist || "")}`;
+
+    try {
+      const resp = await fetch(dlUrl);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.style.display = "none";
+        a.href = blobUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(blobUrl);
+          a.remove();
+        }, 5000);
+        toast("✅ Downloaded: " + cleanTitle);
+        return;
+      }
+    } catch (e) {}
+
+    // Fallback via hidden iframe so beforeunload never pauses the player
+    let iframe = document.getElementById("hiddenDlFrame");
+    if (!iframe) {
+      iframe = document.createElement("iframe");
+      iframe.id = "hiddenDlFrame";
+      iframe.style.display = "none";
+      document.body.appendChild(iframe);
+    }
+    iframe.src = dlUrl;
+  };
+
+  window.downloadCurrentSong = function () {
+    const s = current();
+    if (s) window.downloadSongObj(s);
+    else toast("Play a song first to download");
   };
 
   window.scrollToLyricsCard = function () {
@@ -4089,10 +4198,10 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
           <div class="card-artist">${esc(s.artist)}</div>
         </div>
         <div class="card-actions">
-          <button data-act="like" class="${liked ? "liked" : ""}">♥</button>
-          <button data-act="lyrics">🎤 Lyrics</button>
-          <button data-act="queue">+Queue</button>
-          <button data-act="playlist">+List</button>
+          <button data-act="like" class="${liked ? "liked" : ""}" title="Like">♥</button>
+          <button data-act="lyrics" title="Lyrics">🎤 Lyrics</button>
+          <button data-act="download" title="Download Full Song">⬇ Save</button>
+          <button data-act="playlist" title="Add to Playlist">+List</button>
         </div>
       </div>`;
     }).join("") + '</div>' +
@@ -4116,6 +4225,8 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
       } else if (act === "lyrics") {
         window.Player.playSongs(currentSongs, i, true);
         setTimeout(window.scrollToLyricsCard, 250);
+      } else if (act === "download") {
+        window.downloadSongObj(song);
       } else if (act === "queue") window.Player.addToQueue(song);
       else if (act === "playlist") openAddToPlaylist(song);
       return;
@@ -4459,7 +4570,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-all-langs-v14";
+SW_JS = r'''const CACHE = "musify-dl-backguard-v15";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
@@ -4876,6 +4987,53 @@ def api_save_profile():
         return _err("Valid numeric age is required", 400)
     except Exception as e:
         return _err(e)
+
+
+# --- Full-Song File Download Endpoint ---
+
+@app.route("/api/download", methods=["GET"])
+def api_download_song():
+    """
+    Streams/downloads a full-length song from JioSaavn CDN with Content-Disposition: attachment
+    so mobile browsers save it directly to the phone's Downloads folder with its clean title.
+    """
+    media_url = request.args.get("url", "").strip()
+    song_id = request.args.get("id", "").strip()
+    title = request.args.get("title", "Musify_Song").strip()
+    artist = request.args.get("artist", "").strip()
+
+    if not media_url and song_id:
+        song_obj = get_song(song_id, lyrics=False)
+        if song_obj and song_obj.get("media_url"):
+            media_url = song_obj["media_url"]
+            title = song_obj.get("title") or title
+            artist = song_obj.get("artist") or artist
+
+    if not media_url:
+        return _err("Valid song stream URL or ID is required for download", 400)
+
+    # Ensure we use full-length aac.saavncdn.com URLs
+    candidates = _build_full_aac_urls(media_url, is_320=True)
+    clean_name = re.sub(r'[\\/*?:"<>|]+', "", f"{title} - {artist}" if artist else title).strip() or "Musify_Song"
+    filename = f"{clean_name}.m4a"
+
+    for cand_url in candidates:
+        try:
+            upstream = requests.get(cand_url, headers=REQ_HEADERS, stream=True, timeout=12)
+            if upstream.status_code == 200:
+                content_type = upstream.headers.get("Content-Type", "audio/mp4")
+                headers = {
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Content-Type": content_type,
+                    "Cache-Control": "no-cache"
+                }
+                if upstream.headers.get("Content-Length"):
+                    headers["Content-Length"] = upstream.headers["Content-Length"]
+                return Response(upstream.iter_content(chunk_size=65536), headers=headers, content_type=content_type)
+        except Exception:
+            continue
+
+    return _err("Could not download audio stream", 502)
 
 
 # --- Health ---
