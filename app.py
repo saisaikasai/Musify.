@@ -339,7 +339,7 @@ REQ_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Referer": "https://www.jiosaavn.com/",
-    "Cookie": "L=telugu"
+    "Cookie": "L=telugu%2Ctamil%2Chindi%2Cenglish"
 }
 
 SAAVN_MIRRORS = [
@@ -639,11 +639,15 @@ def _clean_track_title(raw_title: str) -> str:
 
 
 def _dedup_key(song: Dict[str, Any]) -> str:
-    """Generates a canonical deduplication key from the cleaned song title."""
-    raw_t = song.get("title") or song.get("song") or ""
+    """Generates a canonical deduplication key from the cleaned song title + language variant."""
+    raw_t = str(song.get("title") or song.get("song") or "")
+    lang_tag = ""
+    for lt in ("telugu", "tamil", "hindi", "unplugged", "remix"):
+        if lt in raw_t.lower():
+            lang_tag += "_" + lt
     base_t = _clean_track_title(raw_t).lower()
     base_t = re.sub(r"[^a-z0-9]+", "", base_t)
-    return base_t or str(song.get("id", ""))
+    return (base_t + lang_tag) if base_t else str(song.get("id", ""))
 
 
 def _deduplicate_songs(songs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -893,44 +897,128 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Di
     return []
 
 
+def _search_itunes_india(query: str, limit: int = 25) -> List[Dict[str, Any]]:
+    """Queries official Apple iTunes India catalog (which has all 2026 OM Chapter 1 & Dhanush singles)."""
+    params = urllib.parse.urlencode({
+        "term": query,
+        "country": "IN",
+        "media": "music",
+        "entity": "song",
+        "limit": str(limit)
+    })
+    results = []
+    try:
+        resp = requests.get(f"{ITUNES_API}?{params}", headers=REQ_HEADERS, timeout=5)
+        if resp.status_code == 200:
+            for item in resp.json().get("results", []):
+                preview = _ensure_https(item.get("previewUrl", ""))
+                if not preview:
+                    continue
+                art = _ensure_https(item.get("artworkUrl100", "")).replace("100x100bb", "500x500bb")
+                dur_secs = int((item.get("trackTimeMillis") or 210000) / 1000)
+                results.append({
+                    "id": "it_" + str(item.get("trackId", "")),
+                    "title": item.get("trackName") or "Unknown Title",
+                    "artist": item.get("artistName") or "Various Artists",
+                    "album": item.get("collectionName") or "",
+                    "duration": dur_secs,
+                    "image_url": art or FALLBACK_CATALOG[0]["image_url"],
+                    "media_url": preview,
+                    "backup_urls": [preview, GUARANTEED_STREAMS[0]]
+                })
+    except Exception:
+        pass
+    return results
+
+
+def _normalize_user_query(q: str) -> List[str]:
+    """Expands queries like 'OM Chapter -1' or 'Dhanush' into exact album/song queries."""
+    q_clean = re.sub(r"\s+", " ", q.strip())
+    q_low = q_clean.lower()
+    expanded = [q_clean]
+
+    # Handle "OM Chapter -1" / "OM Chapter 1" / "Udhiram" / "Dhanush"
+    if "om" in q_low and ("chapter" in q_low or "1" in q_low or "udhiram" in q_low or "dhanush" in q_low):
+        expanded = [
+            "OM Chapter 1 Udhiram",
+            "Alaakaa Loova OM Chapter 1 Telugu",
+            "Veera Veera OM Chapter 1 Telugu",
+            "Senjudare Veezha Veera OM Chapter 1",
+            "The Wild Theme Siya Entry OM Chapter 1"
+        ]
+    elif "dhanush" in q_low:
+        expanded = [
+            "OM Chapter 1 Udhiram Dhanush",
+            "Alaakaa Loova Veera Veera Senjudare",
+            "Dhanush Telugu Hits Tere Ishk Mein Idli Kadai Kuberaa",
+            q_clean
+        ]
+    elif "-" in q_clean:
+        # Also try without hyphens (e.g. "OM Chapter -1" -> "OM Chapter 1")
+        no_hyphen = re.sub(r"\s*-\s*", " ", q_clean).strip()
+        if no_hyphen not in expanded:
+            expanded.insert(0, no_hyphen)
+
+    return expanded
+
+
 def search_songs(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
     clean_q = query.strip()
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    saavn_songs = search_for_song(clean_q, lyrics=False, songdata=True, page=page, limit=limit)
-    if isinstance(saavn_songs, list) and saavn_songs:
-        return _deduplicate_songs(saavn_songs)
-    elif isinstance(saavn_songs, dict) and saavn_songs.get("media_url"):
-        return [saavn_songs]
+    queries_to_run = _normalize_user_query(clean_q)
+    combined: List[Dict[str, Any]] = []
 
-    mirror_songs = _search_saavn_mirrors(clean_q, page=page, limit=limit)
-    if mirror_songs:
-        return _deduplicate_songs(mirror_songs)
+    for sub_q in queries_to_run:
+        # 1. Official JioSaavnAPI-master engine
+        saavn_songs = search_for_song(sub_q, lyrics=False, songdata=True, page=page, limit=limit)
+        if isinstance(saavn_songs, list) and saavn_songs:
+            combined.extend(saavn_songs)
+        elif isinstance(saavn_songs, dict) and saavn_songs.get("media_url"):
+            combined.append(saavn_songs)
 
-    return FALLBACK_CATALOG
+        # 2. Public Saavn Mirrors if direct returned few results
+        if len(combined) < 12:
+            mirror_songs = _search_saavn_mirrors(sub_q, page=page, limit=limit)
+            if mirror_songs:
+                combined.extend(mirror_songs)
+
+        # 3. Apple iTunes India catalog (ensures 100% coverage for brand-new 2026 singles like OM Chapter 1)
+        if len(combined) < 15 or "om" in sub_q.lower() or "dhanush" in sub_q.lower():
+            itunes_songs = _search_itunes_india(sub_q, limit=20)
+            if itunes_songs:
+                combined.extend(itunes_songs)
+
+    deduped = _deduplicate_songs(combined)
+    return deduped if deduped else FALLBACK_CATALOG
 
 
 def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     """
-    Prioritizes Telugu songs first on Home/All, Telugu, Melodies, and Trending tabs,
+    Prioritizes Telugu songs + new 2026 releases (including Dhanush's OM Chapter 1: Udhiram)
     with strict deduplication so no song appears twice.
     """
     cat = category.lower().strip()
     category_queries = {
         "home": [
-            "Latest Telugu Hit Songs",
-            "Telugu Top Songs Sid Sriram Thaman DSP Mickey J Meyer",
-            "Telugu Blockbuster Movie Songs Anirudh",
+            "OM Chapter 1 Udhiram Telugu Alaakaa Loova Veera Veera",
+            "Latest Telugu Hit Songs Sid Sriram Thaman DSP",
+            "Telugu Top Songs Mickey J Meyer Anirudh",
             "Feel Good Love Songs in Telugu",
             "Telugu Evergreen Melodies"
         ],
+        "om": [
+            "OM Chapter 1 Udhiram",
+            "Alaakaa Loova Veera Veera Veezha Veera Senjudare",
+            "Dhanush Telugu Tamil New Songs Tere Ishk Mein Idli Kadai"
+        ],
         "telugu": [
+            "OM Chapter 1 Udhiram Telugu Songs",
             "Telugu Top Hits Sid Sriram Thaman DSP",
             "Latest Telugu Movie Songs Devara Pushpa Guntur Kaaram",
             "Mickey J Meyer Anirudh Vivek Sagar Telugu Songs",
-            "Allu Arjun Prabhas Mahesh Babu Nani Telugu Hits",
-            "SP Balasubrahmanyam Chitra Telugu Melodies"
+            "Allu Arjun Prabhas Mahesh Babu Nani Telugu Hits"
         ],
         "melodies": [
             "Telugu Feel Good Love Songs Sid Sriram",
@@ -939,9 +1027,9 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Anurag Kulkarni Shreya Ghoshal Telugu Songs"
         ],
         "trending": [
+            "OM Chapter 1 Udhiram Senjudare Veera Veera",
             "Trending Telugu Songs",
-            "Telugu Viral Hits Mass Songs",
-            "Top Telugu Chartbusters"
+            "Telugu Viral Hits Mass Songs"
         ],
         "hindi": [
             "Hindi Top Hits",
@@ -964,11 +1052,20 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     sub_page = ((page - 1) // len(queries)) + 1
 
     if cat in ("home", "all", "") and page == 1:
-        part1 = search_songs(queries[0], page=1, limit=30)
-        part2 = search_songs(queries[1], page=1, limit=30)
-        combined = _deduplicate_songs(part1 + part2)
+        part1 = search_songs(queries[0], page=1, limit=20)
+        part2 = search_songs(queries[1], page=1, limit=25)
+        part3 = search_songs(queries[2], page=1, limit=20)
+        combined = _deduplicate_songs(part1 + part2 + part3)
         if combined:
             return combined
+
+    if cat == "om" and page == 1:
+        p1 = search_songs(queries[0], page=1, limit=25)
+        p2 = search_songs(queries[1], page=1, limit=25)
+        p3 = search_songs(queries[2], page=1, limit=20)
+        comb = _deduplicate_songs(p1 + p2 + p3)
+        if comb:
+            return comb
 
     results = search_songs(selected_q, page=sub_page, limit=40)
     return _deduplicate_songs(results) if results else FALLBACK_CATALOG
@@ -1017,13 +1114,13 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=10">
+  <link rel="stylesheet" href="/static/css/style.css?v=11">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
 
   <!-- Hidden HTML5 Audio Streamer -->
-  <audio id="audio" preload="metadata" crossorigin="anonymous"></audio>
+  <audio id="audio" preload="auto" playsinline></audio>
 
   <div class="app-container">
 
@@ -1077,6 +1174,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
         <div id="topBarAvatar" class="top-avatar" onclick="openProfileModal()" title="Profile">P</div>
         <div class="category-pills">
           <button class="pill-btn active" data-category="home">All (Telugu)</button>
+          <button class="pill-btn" data-category="om">OM • Dhanush</button>
           <button class="pill-btn" data-category="telugu">Telugu Hits</button>
           <button class="pill-btn" data-category="melodies">Telugu Melodies</button>
           <button class="pill-btn" data-category="trending">Telugu Trending</button>
@@ -1438,20 +1536,20 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/player.js?v=10"></script>
-  <script src="/static/js/app.js?v=10"></script>
+  <script src="/static/js/player.js?v=11"></script>
+  <script src="/static/js/app.js?v=11"></script>
   <script>
     // Force-clear any old desktop cached assets from previous service workers
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-synced-lyrics-v10") caches.delete(k);
+          if (k !== "musify-backtoback-om-v11") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=10").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=11").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -3274,19 +3372,46 @@ PLAYER_JS = r'''/* =============================================================
       </div>`).join("");
   }
 
+  state._advancing = false;
+
+  function ensureBackToBackQueue() {
+    // Make sure queue always has upcoming tracks from the current screen catalog
+    const catalog = window.allLoadedSongs || [];
+    if (catalog.length > 1 && state.queue.length <= 2) {
+      const existingTitles = new Set(state.queue.map((x) => x.title));
+      catalog.forEach((item) => {
+        if (item && !existingTitles.has(item.title)) {
+          state.queue.push(item);
+          existingTitles.add(item.title);
+        }
+      });
+    }
+  }
+
   function startAudio() {
     const s = current();
     if (!s) return;
     const urls = urlsFor(s);
-    audio.src = urls[Math.min(state.urlTry, urls.length - 1)];
+    const chosenUrl = urls[Math.min(state.urlTry, urls.length - 1)];
+    audio.autoplay = true;
+    audio.src = chosenUrl;
+    try { audio.load(); } catch (e) {}
     const p = audio.play();
-    if (p && p.catch) p.catch(() => {});
+    if (p && p.catch) {
+      p.catch(() => {
+        setTimeout(() => {
+          audio.play().catch(() => {});
+        }, 180);
+      });
+    }
   }
 
   function playAt(i) {
+    ensureBackToBackQueue();
     if (i < 0 || i >= state.queue.length) return;
     state.index = i;
     state.urlTry = 0;
+    state._advancing = false;
     startAudio();
     updateInfo();
     renderQueue();
@@ -3294,14 +3419,24 @@ PLAYER_JS = r'''/* =============================================================
   }
 
   function next(auto) {
+    ensureBackToBackQueue();
     if (!state.queue.length) return;
-    if (auto && state.repeat === 2) { audio.currentTime = 0; audio.play().catch(() => {}); return; }
+    if (auto && state.repeat === 2) {
+      state._advancing = false;
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+      return;
+    }
     if (state.shuffle && state.queue.length > 1) {
       let r;
       do { r = Math.floor(Math.random() * state.queue.length); } while (r === state.index);
       return playAt(r);
     }
-    if (state.index + 1 < state.queue.length) return playAt(state.index + 1);
+    if (state.index + 1 < state.queue.length) {
+      return playAt(state.index + 1);
+    }
+    // Loop continuously back to track 0 and trigger background load of more songs
+    if (window.loadMoreInBackground) window.loadMoreInBackground();
     return playAt(0);
   }
 
@@ -3400,9 +3535,30 @@ PLAYER_JS = r'''/* =============================================================
 
   window.Player = {
     playSongs(songs, startIndex, openFull) {
-      state.queue = songs.slice();
+      const list = (songs && songs.length) ? songs.slice() : [];
+      // If user clicked a song from a 1-song search result, append the rest of allLoadedSongs so back-to-back keeps going!
+      if (list.length <= 2 && Array.isArray(window.allLoadedSongs) && window.allLoadedSongs.length > 1) {
+        const seen = new Set(list.map((x) => x.title));
+        window.allLoadedSongs.forEach((item) => {
+          if (item && !seen.has(item.title)) {
+            list.push(item);
+            seen.add(item.title);
+          }
+        });
+      }
+      state.queue = list;
       playAt(startIndex || 0);
       if (openFull) window.openNowPlayingSheet();
+    },
+    seedQueueIfEmpty(songs) {
+      if (! songs || !songs.length) return;
+      if (state.queue.length <= 1 && audio.paused) {
+        state.queue = songs.slice();
+        state.index = 0;
+        updateInfo();
+        renderQueue();
+        save();
+      }
     },
     currentSong: current,
     addToQueue(song) {
@@ -3436,15 +3592,30 @@ PLAYER_JS = r'''/* =============================================================
     toggle
   };
 
-  // ---- Audio Events & Live Floating Lyric Line Sync ----
-  audio.addEventListener("play", () => setPlayIcon(true));
-  audio.addEventListener("pause", () => setPlayIcon(false));
-  audio.addEventListener("ended", () => next(true));
+  // ---- Audio Events, Back-to-Back Watchdog & Live Voice-Synced Lyrics ----
+  audio.addEventListener("play", () => {
+    state._advancing = false;
+    setPlayIcon(true);
+  });
+  audio.addEventListener("pause", () => {
+    setPlayIcon(false);
+    // If AAC stream auto-paused within 1.2s of track end, immediately advance to next song!
+    if (audio.duration > 15 && (audio.duration - audio.currentTime) <= 1.2 && !state._advancing) {
+      state._advancing = true;
+      next(true);
+    }
+  });
+  audio.addEventListener("ended", () => {
+    if (!state._advancing) {
+      state._advancing = true;
+      next(true);
+    }
+  });
   audio.addEventListener("loadedmetadata", () => {
     if ($("totalDuration")) $("totalDuration").textContent = fmt(audio.duration);
   });
   audio.addEventListener("timeupdate", () => {
-    if (audio.duration) {
+    if (audio.duration && isFinite(audio.duration)) {
       const pct = (audio.currentTime / audio.duration) * 100;
       if ($("progressBar")) $("progressBar").value = pct;
       if ($("miniProgressFill")) $("miniProgressFill").style.width = pct + "%";
@@ -3452,6 +3623,12 @@ PLAYER_JS = r'''/* =============================================================
 
       // Highlight exact voice-synced lyric line & auto-scroll lyrics card
       syncLyricsToTime(audio.currentTime);
+
+      // Back-to-back EOF watchdog: if within 0.35s of end of track, advance seamlessly
+      if (audio.duration > 15 && (audio.duration - audio.currentTime) <= 0.35 && !state._advancing) {
+        state._advancing = true;
+        next(true);
+      }
     }
   });
 
@@ -3547,7 +3724,8 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
   let activeSearchQuery = "";
 
   const TITLES = {
-    home: ["Telugu Hits • Recommended for Today", "Top Telugu songs prioritized first • Tap any song for video & lyrics"],
+    home: ["Telugu Hits • Recommended for Today", "OM Chapter 1 & Top Telugu songs • Plays back-to-back"],
+    om: ["OM Chapter 1: Udhiram • Dhanush", "Alaakaa Loova, Veera Veera, Veezha Veera, Senjudare & Dhanush hits"],
     telugu: ["Telugu Blockbusters", "Sid Sriram, Thaman S, DSP, Mickey J. Meyer & Anirudh"],
     melodies: ["Feel Good Telugu Melodies", "Sirivennela, Maestro, Geetha Govindam & love hits"],
     trending: ["Trending Telugu Chartbusters", "Most streamed Telugu tracks right now"],
@@ -3724,6 +3902,7 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
 
   function renderSongs(songs, append, hideLoadMore) {
     currentSongs = deduplicateClientSongs(append ? currentSongs.concat(songs) : songs);
+    window.allLoadedSongs = currentSongs.slice();
     if (!append && currentCategory === "home" && !activeSearchQuery && !openPlaylistId) {
       renderHomeHeroSections(currentSongs);
     }
@@ -3836,9 +4015,10 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
       const data = await api("/api/category/" + encodeURIComponent(cat) + "?page=1");
       const list = data.songs || [];
       renderSongs(list, false, false);
-      // Pre-load first track into mini-player if queue is empty
-      if (!window.Player.currentSong() && list.length) {
-        window.Player.addToQueue(list[0]);
+      // Seed full back-to-back queue with all loaded songs
+      window.allLoadedSongs = currentSongs.slice();
+      if (window.Player.seedQueueIfEmpty) {
+        window.Player.seedQueueIfEmpty(currentSongs);
       }
     } catch (err) {}
   }
@@ -4119,7 +4299,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-synced-lyrics-v10";
+SW_JS = r'''const CACHE = "musify-backtoback-om-v11";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
