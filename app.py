@@ -339,10 +339,14 @@ playlist_details_base_url = "https://www.jiosaavn.com/api.php?__call=playlist.ge
 lyrics_base_url = "https://www.jiosaavn.com/api.php?__call=lyrics.getLyrics&ctx=web6dot0&api_version=4&_format=json&_marker=0%3F_marker%3D0&lyrics_id="
 
 REQ_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-IN,te-IN;q=0.9,hi-IN;q=0.8,en-US;q=0.7",
     "Referer": "https://www.jiosaavn.com/",
-    "Cookie": "L=telugu%2Chindi%2Cenglish%2Ctamil%2Ckannada%2Cmalayalam%2Cpunjabi"
+    "X-Forwarded-For": "49.205.120.14",
+    "X-Real-IP": "49.205.120.14",
+    "CF-Connecting-IP": "49.205.120.14",
+    "Cookie": "L=telugu%2Chindi%2Cenglish%2Ctamil%2Cpunjabi"
 }
 
 SAAVN_MIRRORS = [
@@ -655,20 +659,50 @@ def _dedup_key(song: Dict[str, Any]) -> str:
     return (base_t + lang_tag) if base_t else str(song.get("id", ""))
 
 
-def _deduplicate_songs(songs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Removes duplicate/repeated songs that share the same ID, media_url, or normalized base title."""
+JUNK_KEYWORDS = (
+    "marimba", "rock a bye", "cover songs collective", "jess.x.kirby", "shape of young",
+    "karaoke", "lullaby", "8-bit", "8 bit", "ringtone", "tribute to", "originally performed",
+    "instrumental version", "piano cover", "midi", "workout remix"
+)
+
+
+def _is_junk_or_fake_cover(song: Dict[str, Any]) -> bool:
+    """Filters out fake marimba/lullaby/karaoke cover knockoffs (like 'Rock A Bye Pop Rock' or 'Shape of Young')."""
+    title = str(song.get("title") or song.get("song") or "").lower()
+    artist = str(song.get("artist") or song.get("primary_artists") or "").lower()
+    album = str(song.get("album") or "").lower()
+    combined = f"{title} {artist} {album}"
+    for kw in JUNK_KEYWORDS:
+        if kw in combined:
+            return True
+    return False
+
+
+def _deduplicate_songs(songs: List[Dict[str, Any]], max_per_album: int = 0) -> List[Dict[str, Any]]:
+    """Removes duplicate songs and fake cover tracks, and optionally caps tracks per album for variety."""
     unique = []
     seen_keys = set()
     seen_ids = set()
     seen_urls = set()
+    album_counts: Dict[str, int] = {}
+
     for s in songs:
         if not isinstance(s, dict):
+            continue
+        if _is_junk_or_fake_cover(s):
             continue
         sid = str(s.get("id", "")).strip()
         murl = str(s.get("media_url", "")).strip()
         dkey = _dedup_key(s)
         if (sid and sid in seen_ids) or (dkey and dkey in seen_keys) or (murl and murl in seen_urls and murl not in GUARANTEED_STREAMS):
             continue
+
+        alb_key = _clean_track_title(str(s.get("album") or "")).lower()
+        if max_per_album > 0 and alb_key and len(alb_key) > 2:
+            if album_counts.get(alb_key, 0) >= max_per_album:
+                continue
+            album_counts[alb_key] = album_counts.get(alb_key, 0) + 1
+
         if sid:
             seen_ids.add(sid)
         if dkey:
@@ -816,13 +850,13 @@ def _cache_set(key: str, val: List[Dict[str, Any]]) -> None:
     _SEARCH_CACHE[key] = (_time.time(), val)
 
 
-def _search_v4_songs(clean_q: str, page: int = 1, limit: int = 40, lyrics: bool = False) -> List[Dict[str, Any]]:
+def _search_v4_songs(clean_q: str, page: int = 1, limit: int = 35, lyrics: bool = False) -> List[Dict[str, Any]]:
     """Calls JioSaavn v4 search.getResults and decrypts full-length streams directly."""
     out: List[Dict[str, Any]] = []
     fallback_ids: List[str] = []
     try:
         v4_url = f"{search_results_base_url}&api_version=4&ctx=web6dot0&n={limit}&p={page}&q={urllib.parse.quote(clean_q)}"
-        v4_resp = requests.get(v4_url, headers=REQ_HEADERS, timeout=6)
+        v4_resp = requests.get(v4_url, headers=REQ_HEADERS, timeout=5)
         v4_data = _parse_saavn_json(v4_resp.text)
         if isinstance(v4_data, dict):
             for item in v4_data.get("results", []):
@@ -831,7 +865,7 @@ def _search_v4_songs(clean_q: str, page: int = 1, limit: int = 40, lyrics: bool 
                 more = item.get("more_info") if isinstance(item.get("more_info"), dict) else {}
                 if more.get("encrypted_media_url") or item.get("encrypted_media_url") or more.get("vlink"):
                     formatted = format_song(item, lyrics=lyrics)
-                    if formatted.get("media_url"):
+                    if formatted.get("media_url") and not _is_junk_or_fake_cover(formatted):
                         out.append(formatted)
                 elif item.get("id"):
                     fallback_ids.append(str(item["id"]))
@@ -839,87 +873,16 @@ def _search_v4_songs(clean_q: str, page: int = 1, limit: int = 40, lyrics: bool 
         logger.debug(f"v4 search.getResults error: {e}")
 
     if fallback_ids and not out:
-        out.extend(get_songs_batch(fallback_ids, lyrics=lyrics))
+        out.extend(get_songs_batch(fallback_ids[:20], lyrics=lyrics))
     return out
 
 
-def _search_albums_and_playlists(clean_q: str, lyrics: bool = False) -> List[Dict[str, Any]]:
-    """
-    Checks JioSaavn autocomplete for matching Movie Albums and Singer/Mood Playlists,
-    and extracts ALL songs inside the top matching albums and playlists so no movie/singer track is missed!
-    """
-    extra_songs: List[Dict[str, Any]] = []
-    try:
-        ac_url = search_base_url + urllib.parse.quote(clean_q)
-        ac_resp = requests.get(ac_url, headers=REQ_HEADERS, timeout=5)
-        ac_data = _parse_saavn_json(ac_resp.text)
-        if not isinstance(ac_data, dict):
-            return []
-
-        # 1. Extract all songs from top 2 matching Movie Albums
-        albums_data = (ac_data.get("albums") or {}).get("data") or []
-        for alb in albums_data[:2]:
-            if isinstance(alb, dict) and alb.get("id"):
-                alb_obj = get_album(str(alb["id"]), lyrics=lyrics)
-                if alb_obj and isinstance(alb_obj.get("songs"), list):
-                    extra_songs.extend(alb_obj["songs"])
-
-        # 2. Extract songs from top matching Singer / Mood Featured Playlist
-        playlists_data = (ac_data.get("playlists") or {}).get("data") or []
-        for pl in playlists_data[:1]:
-            if isinstance(pl, dict) and pl.get("id"):
-                pl_obj = get_playlist(str(pl["id"]), lyrics=lyrics)
-                if pl_obj and isinstance(pl_obj.get("songs"), list):
-                    extra_songs.extend(pl_obj["songs"][:35])
-    except Exception as e:
-        logger.debug(f"Album/Playlist deep extraction skipped: {e}")
-    return extra_songs
-
-
-def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 40) -> Any:
-    """
-    Deep JioSaavn search combining:
-    1. Direct v4 song search (40 songs per page)
-    2. Full Movie Album & Featured Singer/Mood Playlist song extraction (on page 1)
-    3. Multi-page offset (fetches 2 JioSaavn pages at once so every page returns up to 60+ songs!)
-    """
-    clean_q = query.strip()
-    if clean_q.startswith("http") and "saavn.com" in clean_q:
-        sid = get_song_id(clean_q)
-        return get_song(sid, lyrics) if sid else []
-
-    if not songdata:
-        try:
-            ac_resp = requests.get(search_base_url + urllib.parse.quote(clean_q), headers=REQ_HEADERS, timeout=5)
-            return _parse_saavn_json(ac_resp.text).get("songs", {}).get("data", [])
-        except Exception:
-            return []
-
-    saavn_page_a = (page - 1) * 2 + 1
-    saavn_page_b = saavn_page_a + 1
-
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        fut_a = pool.submit(_search_v4_songs, clean_q, saavn_page_a, limit, lyrics)
-        fut_b = pool.submit(_search_v4_songs, clean_q, saavn_page_b, limit, lyrics)
-        fut_alb = pool.submit(_search_albums_and_playlists, clean_q, lyrics) if page == 1 else None
-
-        songs_a = fut_a.result() or []
-        songs_b = fut_b.result() or []
-        songs_alb = (fut_alb.result() or []) if fut_alb else []
-
-    combined = songs_alb + songs_a + songs_b
-    if combined:
-        return _deduplicate_songs(combined)
-
-    return []
-
-
-def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
-    """Fallback to public JioSaavn mirrors returning full-length aac.saavncdn.com streams."""
+def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, Any]]:
+    """Queries India-backed JioSaavn mirrors returning full-length aac.saavncdn.com streams."""
     for mirror in SAAVN_MIRRORS:
         url = f"{mirror}/search/songs?query={urllib.parse.quote(query)}&page={page}&limit={limit}"
         try:
-            resp = requests.get(url, headers=REQ_HEADERS, timeout=6)
+            resp = requests.get(url, headers=REQ_HEADERS, timeout=5)
             if resp.status_code == 200:
                 data = resp.json()
                 raw_items = (
@@ -957,7 +920,7 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Di
                         artist_str = format_str(raw.get("primaryArtists") or raw.get("artist") or "Various Artists")
                     album_info = raw.get("album")
                     album_str = format_str(album_info.get("name") if isinstance(album_info, dict) else (album_info or ""))
-                    results.append({
+                    song_obj = {
                         "id": str(raw.get("id", "")),
                         "title": format_str(raw.get("name") or raw.get("title") or "Unknown Title"),
                         "artist": artist_str,
@@ -966,7 +929,9 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Di
                         "image_url": _ensure_https(img_u) or FALLBACK_CATALOG[0]["image_url"],
                         "media_url": urls[0],
                         "backup_urls": urls
-                    })
+                    }
+                    if not _is_junk_or_fake_cover(song_obj):
+                        results.append(song_obj)
                 if results:
                     return _deduplicate_songs(results)
         except Exception:
@@ -974,39 +939,71 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Di
     return []
 
 
+def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 35) -> Any:
+    """
+    Combines India-backed Saavn Mirrors + Direct JioSaavn v4 search concurrently
+    so US-hosted Vercel servers never suffer from US geo-blocking or cover-song pollution!
+    """
+    clean_q = query.strip()
+    if clean_q.startswith("http") and "saavn.com" in clean_q:
+        sid = get_song_id(clean_q)
+        return get_song(sid, lyrics) if sid else []
+
+    if not songdata:
+        try:
+            ac_resp = requests.get(search_base_url + urllib.parse.quote(clean_q), headers=REQ_HEADERS, timeout=5)
+            return _parse_saavn_json(ac_resp.text).get("songs", {}).get("data", [])
+        except Exception:
+            return []
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_v4 = pool.submit(_search_v4_songs, clean_q, page, limit, lyrics)
+        fut_mir = pool.submit(_search_saavn_mirrors, clean_q, page, limit)
+        v4_res = fut_v4.result() or []
+        mir_res = fut_mir.result() or []
+
+    # Merge mirror results + direct v4 results and remove fake covers & duplicates
+    combined = mir_res + v4_res
+    return _deduplicate_songs(combined)
+
+
 def _normalize_user_query(q: str) -> List[str]:
-    """Expands artist, movie, and mood searches into comprehensive JioSaavn queries."""
+    """Converts user searches into clean, short 2-3 word queries that JioSaavn ranks accurately."""
     q_clean = re.sub(r"\s+", " ", q.strip())
     q_low = q_clean.lower()
 
     if "shareen" in q_low or "sheeran" in q_low:
         return [
             "Ed Sheeran",
-            "Ed Sheeran Shape of You Perfect Bad Habits Photograph",
-            "Ed Sheeran Thinking Out Loud Sapphire Azizam Shivers Galway Girl"
+            "Shape of You Ed Sheeran",
+            "Perfect Ed Sheeran",
+            "Bad Habits Ed Sheeran",
+            "Photograph Ed Sheeran"
         ]
     if "weeknd" in q_low or "weekend" in q_low:
         return [
             "The Weeknd",
-            "The Weeknd Blinding Lights Starboy Die For You Save Your Tears",
-            "The Weeknd One Of The Girls Timeless Popular Creepin Hills Call Out My Name"
+            "Blinding Lights The Weeknd",
+            "Starboy The Weeknd",
+            "Die For You The Weeknd",
+            "Save Your Tears The Weeknd"
         ]
     if "om" in q_low and ("chapter" in q_low or "1" in q_low or "udhiram" in q_low or "dhanush" in q_low):
         return [
-            "OM Chapter 1 Udhiram",
             "Alaakaa Loova",
-            "Veera Veera OM Chapter 1",
-            "Veezha Veera OM Chapter 1",
-            "Senjudare OM Chapter 1",
-            "The Wild Theme OM Chapter 1",
-            "Siya Entry OM Chapter 1"
+            "Senjudare",
+            "Veezha Veera",
+            "Sai Abhyankkar",
+            "Dhanush"
         ]
     if "dhanush" in q_low:
         return [
             "Dhanush",
-            "OM Chapter 1 Udhiram",
-            "Dhanush Telugu Songs 3 Raghuvaran B Tech Sir Maari",
-            "Tere Ishk Mein Idli Kadai Kuberaa Raayan Dhanush"
+            "Rowdy Baby Dhanush",
+            "Kolaveri Di Dhanush",
+            "Raghuvaran B Tech",
+            "Raayan Dhanush",
+            "3 Telugu Dhanush"
         ]
 
     expanded = [q_clean]
@@ -1017,26 +1014,20 @@ def _normalize_user_query(q: str) -> List[str]:
     return expanded
 
 
-def _fetch_single_query(sub_q: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _fetch_single_query(sub_q: str, page: int = 1, limit: int = 25) -> List[Dict[str, Any]]:
     saavn_songs = search_for_song(sub_q, lyrics=False, songdata=True, page=page, limit=limit)
-    if isinstance(saavn_songs, list) and saavn_songs:
-        out.extend(saavn_songs)
-    elif isinstance(saavn_songs, dict) and saavn_songs.get("media_url"):
-        out.append(saavn_songs)
-
-    if len(out) < 10:
-        mirror_songs = _search_saavn_mirrors(sub_q, page=page, limit=limit)
-        if mirror_songs:
-            out.extend(mirror_songs)
-    return out
+    if isinstance(saavn_songs, list):
+        return saavn_songs
+    if isinstance(saavn_songs, dict) and saavn_songs.get("media_url"):
+        return [saavn_songs]
+    return []
 
 
-def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: int = 35) -> List[Dict[str, Any]]:
+def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: int = 15, max_per_album: int = 0) -> List[Dict[str, Any]]:
     if not queries:
         return []
     ordered_buckets: List[List[Dict[str, Any]]] = [[] for _ in queries]
-    with ThreadPoolExecutor(max_workers=min(6, len(queries))) as pool:
+    with ThreadPoolExecutor(max_workers=min(8, len(queries))) as pool:
         future_map = {
             pool.submit(_fetch_single_query, q_str, page, per_query_limit): idx
             for idx, q_str in enumerate(queries)
@@ -1048,18 +1039,24 @@ def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: 
             except Exception:
                 ordered_buckets[idx] = []
 
-    merged: List[Dict[str, Any]] = []
-    for bucket in ordered_buckets:
-        merged.extend(bucket)
-    return _deduplicate_songs(merged)
+    # Interleave results across buckets (round-robin) so the top of the page has rich variety
+    # instead of 10 songs from a single query/movie in a row!
+    interleaved: List[Dict[str, Any]] = []
+    max_len = max((len(b) for b in ordered_buckets), default=0)
+    for row_i in range(max_len):
+        for bucket in ordered_buckets:
+            if row_i < len(bucket):
+                interleaved.append(bucket[row_i])
+
+    return _deduplicate_songs(interleaved, max_per_album=max_per_album)
 
 
-def search_songs(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
+def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, Any]]:
     clean_q = query.strip()
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    cache_key = f"search::{clean_q.lower()}::p{page}"
+    cache_key = f"search_v17::{clean_q.lower()}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1073,7 +1070,7 @@ def search_songs(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, A
             return deduped
         return FALLBACK_CATALOG
 
-    deduped = _parallel_fetch_queries(queries_to_run, page=page, per_query_limit=30)
+    deduped = _parallel_fetch_queries(queries_to_run, page=page, per_query_limit=20)
     if deduped:
         _cache_set(cache_key, deduped)
         return deduped
@@ -1082,140 +1079,175 @@ def search_songs(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, A
 
 def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     """
-    Comprehensive Mood, Language & Singer Catalog:
-    Supports 'home', 'telugu', 'om', 'english', 'hindi', 'punjabi',
-    plus all Moods ('love', 'sad', 'mass', 'chill', 'workout', 'drive', 'party', 'evergreen', 'devotional').
+    Uses short, exact 1-3 word queries (which JioSaavn ranks accurately) and round-robin interleaving
+    with max_per_album=2 so no single old album (like 2011 Veera or KGF) ever floods the screen!
     """
     cat = category.lower().strip()
-    cache_key = f"cat::{cat}::p{page}"
+    cache_key = f"cat_v17::{cat}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
 
     category_queries = {
         "home": [
-            "OM Chapter 1 Udhiram Alaakaa Loova Veera Veera",
-            "Latest Telugu Hit Songs Pushpa 2 Devara Guntur Kaaram Kalki Game Changer",
-            "Telugu Top Songs Sid Sriram Thaman DSP Anirudh Mickey J Meyer",
-            "Ed Sheeran Shape of You Perfect Bad Habits Photograph",
-            "The Weeknd Blinding Lights Starboy Die For You Save Your Tears",
-            "Latest Hindi Hit Songs Arijit Singh Stree 2 Animal Jawan Kesariya"
+            "Devara Telugu",
+            "Pushpa 2 Telugu",
+            "Guntur Kaaram",
+            "Hi Nanna",
+            "Ala Vaikunthapurramuloo",
+            "Sid Sriram Telugu",
+            "Ed Sheeran",
+            "The Weeknd",
+            "Arijit Singh"
         ],
         "telugu": [
-            "Latest Telugu Hit Songs Pushpa 2 Devara Kalki Game Changer",
-            "OM Chapter 1 Udhiram Alaakaa Loova Veera Veera",
-            "Telugu Top Hits Sid Sriram Thaman DSP Anirudh",
-            "Hi Nanna Salaar Hanuman Tillu Square Lucky Baskhar Amaran Telugu",
-            "Orange Arya 2 Geetha Govindam Sita Ramam Ala Vaikunthapurramuloo",
-            "Allu Arjun Prabhas Mahesh Babu Nani Jr NTR Pawan Kalyan Ram Charan"
+            "Devara Telugu",
+            "Pushpa 2 Telugu",
+            "Guntur Kaaram",
+            "Hi Nanna",
+            "Kalki 2898 AD Telugu",
+            "Salaar Telugu",
+            "Sita Ramam Telugu",
+            "Ala Vaikunthapurramuloo",
+            "Geetha Govindam",
+            "Sid Sriram Telugu"
         ],
         "om": [
-            "OM Chapter 1 Udhiram",
             "Alaakaa Loova",
-            "Veera Veera OM Chapter 1",
-            "Veezha Veera OM Chapter 1",
-            "Senjudare OM Chapter 1",
-            "Dhanush Telugu Tamil Songs 3 Raghuvaran Tere Ishk Mein Idli Kadai Kuberaa"
+            "Senjudare",
+            "Veezha Veera",
+            "Sai Abhyankkar",
+            "Dhanush",
+            "Rowdy Baby Dhanush",
+            "3 Telugu Dhanush",
+            "Raghuvaran B Tech",
+            "Raayan Dhanush"
         ],
         "english": [
-            "Ed Sheeran Shape of You Perfect Bad Habits Thinking Out Loud Photograph",
-            "The Weeknd Blinding Lights Starboy Save Your Tears Die For You Hills",
-            "The Weeknd One Of The Girls Timeless Creepin Popular",
-            "Dua Lipa Levitating Taylor Swift Cruel Summer Sabrina Carpenter Espresso",
-            "Coldplay Hymn For The Weekend Alan Walker Faded Justin Bieber Stay",
-            "Bruno Mars Billie Eilish Imagine Dragons Believer Eminem Lose Yourself"
+            "Ed Sheeran",
+            "The Weeknd",
+            "Blinding Lights The Weeknd",
+            "Shape of You Ed Sheeran",
+            "Starboy The Weeknd",
+            "Perfect Ed Sheeran",
+            "Dua Lipa",
+            "Alan Walker",
+            "Justin Bieber",
+            "Coldplay"
         ],
         "hindi": [
-            "Latest Hindi Songs Aaj Ki Raat Stree 2 Bhool Bhulaiyaa 3",
-            "Arijit Singh Top Hindi Songs Kesariya Chaleya Satranga Apna Bana Le",
-            "Animal Hindi Songs Arjan Vailly Pehle Bhi Main Abrars Entry",
-            "Pritam Vishal Shekhar Sachin Jigar Bollywood Top Hits",
-            "Tum Hi Ho Kabir Singh Shershaah Aashiqui 2 Rockstar Hindi",
-            "Atif Aslam KK Sonu Nigam Shreya Ghoshal Jubin Nautiyal Hindi Hits"
+            "Arijit Singh",
+            "Stree 2",
+            "Animal Hindi",
+            "Jawan Hindi",
+            "Brahmastra",
+            "Kabir Singh",
+            "Aashiqui 2",
+            "Pritam"
         ],
         "love": [
-            "Telugu Romantic Love Songs Sid Sriram Hesham Abdul Wahab",
-            "Hi Nanna Sita Ramam Geetha Govindam Feel Good Telugu Love Songs",
-            "Arijit Singh Romantic Hindi Songs Tum Hi Ho Kesariya Apna Bana Le",
-            "Ed Sheeran Perfect Thinking Out Loud Taylor Swift Lover"
+            "Hi Nanna",
+            "Sita Ramam Telugu",
+            "Geetha Govindam",
+            "Sid Sriram Telugu",
+            "Arijit Singh",
+            "Ed Sheeran Perfect"
         ],
         "sad": [
-            "Telugu Heartbreak Love Failure Sad Songs Orange Arya 2 3",
-            "Sid Sriram Arijit Singh Emotional Sad Songs Telugu Hindi",
-            "Po Ve Po Kannuladha Oosupodu Adiga Adiga Telugu Sad Hits",
-            "Channa Mereya Agar Tum Saath Ho Bekhayali Tujhe Bhula Diya"
+            "Orange Telugu",
+            "Arya 2",
+            "3 Telugu Dhanush",
+            "Majili Telugu",
+            "Aashiqui 2",
+            "Kabir Singh"
         ],
         "mass": [
-            "Telugu Mass Beats Kuthu Songs DSP Thaman Anirudh",
-            "Kurchi Madathapetti Oo Antava Naatu Naatu Daavudi Boss Party",
-            "Jailer Hukum Vikram Pathala Pathala Leo Naa Ready Mass Songs",
-            "Pushpa 2 Devara Fear Song Salaar Mass Telugu Songs"
+            "Kurchi Madathapetti",
+            "Daavudi Devara",
+            "Pushpa Pushpa",
+            "Oo Antava Telugu",
+            "Naatu Naatu RRR",
+            "Jai Balayya"
         ],
         "chill": [
-            "Feel Good Chill Telugu Melodies Mickey J Meyer Vivek Sagar",
-            "Sirivennela Maestro Sammohanam Pellichoopulu Telugu Chill Songs",
-            "LoFi Chill Hindi Telugu Relaxing Acoustic Songs",
-            "The Weeknd Save Your Tears Coldplay Post Malone Circles"
+            "Sirivennela Shyam Singha Roy",
+            "Oohalu Gusagusalade",
+            "Sammohanam",
+            "Pellichoopulu",
+            "Dear Comrade Telugu"
         ],
         "workout": [
-            "Workout Gym Motivation Songs Telugu Hindi English",
-            "Beast Mode Anirudh KGF Salaar Vikram RRR Workout BGM Songs",
-            "Arjan Vailly Animal Kar Har Maidaan Fateh Zinda Sultan",
-            "Eminem Till I Collapse Imagine Dragons Believer The Weeknd Starboy"
+            "Salaar Telugu",
+            "Vikram Anirudh",
+            "Jailer Anirudh",
+            "Arjan Vailly",
+            "Believer Imagine Dragons",
+            "Starboy The Weeknd"
         ],
         "drive": [
-            "Late Night Drive Telugu Melodies Sid Sriram AR Rahman",
-            "Ye Maaya Chesave Gharshana Awara Oohalu Gusagusalade Telugu",
-            "Night Drive Hindi SongsKK Pritam Mohit Chauhan",
-            "The Weeknd Blinding Lights Nightcall Midnight City"
+            "Ye Maaya Chesave",
+            "Awara Telugu",
+            "Gharshana",
+            "Manam Telugu",
+            "Blinding Lights The Weeknd"
         ],
         "party": [
-            "Telugu Party Dance DJ Songs Thaman DSP",
-            "Bollywood Party Songs Badshah Diljit Dosanjh Aaj Ki Raat Tauba Tauba",
-            "Punjabi Party Hits AP Dhillon Brown Munde Excuses Karan Aujla",
-            "Dua Lipa Don't Start Now Usher Pitbull Calvin Harris Party Hits"
+            "Boss Party",
+            "Dj Tillu",
+            "Tauba Tauba",
+            "Aaj Ki Raat Stree 2",
+            "Brown Munde AP Dhillon",
+            "Levitating Dua Lipa"
         ],
         "evergreen": [
-            "SP Balasubrahmanyam Chitra Telugu Evergreen Melodies 90s 2000s",
-            "Mani Sharma Ilaiyaraaja Keeravani AR Rahman Classic Telugu Hits",
-            "Koti RP Patnaik Chakri Devi Sri Prasad 2000s Telugu Hit Songs",
-            "90s 2000s Evergreen Bollywood Hindi Songs KK Sonu Nigam Shaan"
+            "SP Balasubrahmanyam Telugu",
+            "KS Chithra Telugu",
+            "Mani Sharma Telugu",
+            "Nuve Kavali",
+            "Kushi Pawan Kalyan",
+            "Okkadu Mahesh Babu"
         ],
         "devotional": [
-            "Telugu Devotional Songs Annamayya Keerthanalu SPB",
-            "Shree Hanuman Chalisa Lord Shiva Tirumala Balaji Devotional Songs",
-            "Namo Namo Kedarnath Deva Deva Brahmastra Har Har Shambhu"
+            "Annamayya SPB",
+            "Shree Hanuman Chalisa",
+            "Namo Namo Kedarnath",
+            "Deva Deva Brahmastra"
         ],
         "melodies": [
-            "Telugu Feel Good Love Songs Sid Sriram",
-            "Mickey J Meyer Sirivennela Telugu Melodies",
-            "AR Rahman Ilaiyaraaja Keeravani Telugu Songs",
-            "Anurag Kulkarni Shreya Ghoshal Chinmayi Telugu Songs"
+            "Sid Sriram Telugu",
+            "Sirivennela Shyam Singha Roy",
+            "Hi Nanna",
+            "Sita Ramam Telugu",
+            "Geetha Govindam"
         ],
         "trending": [
-            "OM Chapter 1 Udhiram Alaakaa Loova Veera Veera",
-            "Pushpa 2 Devara Trending Telugu Songs",
-            "The Weeknd Blinding Lights Starboy Ed Sheeran Shape of You",
-            "Trending Hindi Songs Arijit Singh Aaj Ki Raat Chaleya"
+            "Devara Telugu",
+            "Pushpa 2 Telugu",
+            "Alaakaa Loova",
+            "Stree 2",
+            "The Weeknd",
+            "Ed Sheeran"
         ],
         "punjabi": [
-            "Punjabi Top Hits AP Dhillon Excuses Brown Munde",
-            "Diljit Dosanjh Karan Aujla Tauba Tauba Softly",
-            "Shubh Cheques One Love King Shit Punjabi Songs"
+            "AP Dhillon",
+            "Diljit Dosanjh",
+            "Karan Aujla",
+            "Shubh"
         ]
     }
 
-    queries = category_queries.get(cat, [f"{cat} Telugu songs", f"{cat} top hit songs"])
+    queries = category_queries.get(cat, [f"{cat} Telugu", f"{cat}"])
 
     if page == 1:
-        combined = _parallel_fetch_queries(queries, page=1, per_query_limit=25)
+        # Use max_per_album=2 on category feeds so no single album floods 6 slots in a row!
+        combined = _parallel_fetch_queries(queries, page=1, per_query_limit=12, max_per_album=2)
         if combined:
             _cache_set(cache_key, combined)
             return combined
 
     selected_q = queries[(page - 1) % len(queries)]
     sub_page = ((page - 1) // len(queries)) + 1
-    results = _parallel_fetch_queries([selected_q, queries[page % len(queries)]], page=sub_page, per_query_limit=35)
+    results = _parallel_fetch_queries([selected_q, queries[page % len(queries)]], page=sub_page, per_query_limit=20, max_per_album=3)
     if results:
         _cache_set(cache_key, results)
         return results
@@ -1265,7 +1297,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=16">
+  <link rel="stylesheet" href="/static/css/style.css?v=17">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1723,20 +1755,20 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/player.js?v=16"></script>
-  <script src="/static/js/app.js?v=16"></script>
+  <script src="/static/js/player.js?v=17"></script>
+  <script src="/static/js/app.js?v=17"></script>
   <script>
     // Force-clear any old desktop cached assets from previous service workers
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-allsingers-moods-v16") caches.delete(k);
+          if (k !== "musify-real-hits-v17") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=16").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=17").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -2375,6 +2407,7 @@ html, body {
 }
 
 .mini-banner-hint {
+  display: none;
   font-size: 11.5px;
   color: #d1d5db;
   padding: 7px 12px 4px 12px;
@@ -4360,14 +4393,25 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
         </div>`).join("");
     }
 
-    if ($("singersRow") && !$("singersRow").innerHTML) {
-      $("singersRow").innerHTML = ALL_SINGERS.map((sg) => `
-        <div class="singer-circle-card" data-singer-q="${esc(sg.query)}" data-singer-name="${esc(sg.name)}">
-          <div class="singer-avatar-ring">
-            <img src="${esc(sg.img)}" alt="${esc(sg.name)}" loading="lazy">
+    if ($("singersRow")) {
+      $("singersRow").innerHTML = ALL_SINGERS.map((sg, sIdx) => {
+        // Match real artwork from loaded songs if artist appears, otherwise use vibrant gradient monogram avatar
+        const matchedSong = songs.find((x) => (x.artist || "").toLowerCase().includes(sg.name.toLowerCase().split(" ")[0]));
+        const artUrl = matchedSong ? matchedSong.image_url : "";
+        const initials = sg.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+        const hues = ["#1db954", "#e11d48", "#3b82f6", "#ea580c", "#8b5cf6", "#0d9488", "#d97706", "#db2777"];
+        const bgCol = hues[sIdx % hues.length];
+        return `
+        <div class="singer-circle-card" data-singer-q="${esc(sg.name)}" data-singer-name="${esc(sg.name)}">
+          <div class="singer-avatar-ring" style="background:${bgCol};display:flex;align-items:center;justify-content:center;overflow:hidden;">
+            ${artUrl
+              ? `<img src="${esc(artUrl)}" alt="${esc(sg.name)}" loading="lazy">`
+              : `<span style="font-size:22px;font-weight:900;color:#fff;text-shadow:0 2px 6px rgba(0,0,0,0.4);">${esc(initials)}</span>`
+            }
           </div>
           <div class="singer-name-label">${esc(sg.name)}</div>
-        </div>`).join("");
+        </div>`;
+      }).join("");
     }
 
     if ($("moodsGrid") && !$("moodsGrid").innerHTML) {
@@ -4902,7 +4946,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-allsingers-moods-v16";
+SW_JS = r'''const CACHE = "musify-real-hits-v17";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
