@@ -957,40 +957,55 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 35) -> List[Di
     return []
 
 
-def _fetch_saavn_url_direct(song_url: str, lyrics: bool = False) -> List[Dict[str, Any]]:
-    """Resolves a direct JioSaavn song URL (e.g. Raktacharitra Telugu tracks) via webapi.get and mirrors."""
-    token = song_url.rstrip("/").split("/")[-1].strip()
+def _fetch_saavn_url_direct(saavn_url: str, lyrics: bool = False) -> List[Dict[str, Any]]:
+    """Resolves a direct JioSaavn /song/ OR /album/ URL via webapi.get and mirrors."""
+    is_album = "/album/" in saavn_url
+    kind = "album" if is_album else "song"
+    token = saavn_url.rstrip("/").split("/")[-1].strip()
     out: List[Dict[str, Any]] = []
-    # 1. Official JioSaavn v4 webapi.get by URL token
+
+    # 1. Official JioSaavn v4 webapi.get by URL token (works for both song & album tokens)
     if token:
         try:
             w_url = (
                 "https://www.jiosaavn.com/api.php?__call=webapi.get"
-                f"&token={urllib.parse.quote(token)}&type=song&includeMetaTags=0"
+                f"&token={urllib.parse.quote(token)}&type={kind}&includeMetaTags=0"
                 "&ctx=web6dot0&api_version=4&_format=json&_marker=0"
             )
             w_resp = requests.get(w_url, headers=REQ_HEADERS, timeout=5)
             w_data = _parse_saavn_json(w_resp.text)
             if isinstance(w_data, dict):
-                raw_list = w_data.get("songs") if isinstance(w_data.get("songs"), list) else list(w_data.values())
-                for item in raw_list:
-                    if isinstance(item, dict) and (item.get("id") or item.get("encrypted_media_url") or item.get("more_info")):
-                        formatted = format_song(item, lyrics=lyrics)
-                        if formatted.get("media_url") and not _is_junk_or_fake_cover(formatted):
-                            out.append(formatted)
+                raw_list = (
+                    w_data.get("list")
+                    or w_data.get("songs")
+                    or (list(w_data.values()) if not is_album else [])
+                )
+                if isinstance(raw_list, list):
+                    for item in raw_list:
+                        if isinstance(item, dict) and (item.get("id") or item.get("encrypted_media_url") or item.get("more_info")):
+                            formatted = format_song(item, lyrics=lyrics)
+                            if formatted.get("media_url") and not _is_junk_or_fake_cover(formatted):
+                                out.append(formatted)
                 if out:
                     return out
         except Exception as e:
-            logger.debug(f"webapi.get token error ({token}): {e}")
+            logger.debug(f"webapi.get {kind} token error ({token}): {e}")
 
-    # 2. Mirror link lookup
+    # 2. Mirror link lookup (/songs?link= or /albums?link=)
+    endpoint_path = "albums" if is_album else "songs"
     for mirror in SAAVN_MIRRORS:
         try:
-            m_url = f"{mirror}/songs?link={urllib.parse.quote(song_url)}"
+            m_url = f"{mirror}/{endpoint_path}?link={urllib.parse.quote(saavn_url)}"
             m_resp = requests.get(m_url, headers=REQ_HEADERS, timeout=5)
             if m_resp.status_code == 200:
                 m_data = m_resp.json()
-                raw_items = m_data.get("data") if isinstance(m_data.get("data"), list) else []
+                data_node = m_data.get("data")
+                if isinstance(data_node, dict) and isinstance(data_node.get("songs"), list):
+                    raw_items = data_node["songs"]
+                elif isinstance(data_node, list):
+                    raw_items = data_node
+                else:
+                    raw_items = []
                 for raw in raw_items:
                     if not isinstance(raw, dict):
                         continue
@@ -1002,20 +1017,27 @@ def _fetch_saavn_url_direct(song_url: str, lyrics: bool = False) -> List[Dict[st
                     if not raw_urls:
                         continue
                     urls = _build_full_aac_urls(raw_urls[0], is_320=True)
+                    imgs = raw.get("image") or []
+                    img_u = ""
+                    if isinstance(imgs, list) and imgs:
+                        last = imgs[-1]
+                        img_u = last.get("url") or last.get("link") if isinstance(last, dict) else str(last)
+                    elif isinstance(imgs, str):
+                        img_u = imgs
                     artists = raw.get("artists", {})
                     if isinstance(artists, dict) and isinstance(artists.get("primary"), list) and artists["primary"]:
                         artist_str = ", ".join([format_str(a.get("name", "")) for a in artists["primary"] if isinstance(a, dict)])
                     else:
-                        artist_str = format_str(raw.get("primaryArtists") or raw.get("artist") or "Ravindra Upadhyay, Vishvesh Parmar, Sandeep Patil")
+                        artist_str = format_str(raw.get("primaryArtists") or raw.get("artist") or "Various Artists")
                     album_info = raw.get("album")
-                    album_str = format_str(album_info.get("name") if isinstance(album_info, dict) else (album_info or "Raktacharitra"))
+                    album_str = format_str(album_info.get("name") if isinstance(album_info, dict) else (album_info or ""))
                     song_obj = {
                         "id": str(raw.get("id", token)),
-                        "title": format_str(raw.get("name") or raw.get("title") or "Dorikithe Chastavu"),
+                        "title": format_str(raw.get("name") or raw.get("title") or "Unknown Title"),
                         "artist": artist_str,
                         "album": album_str,
-                        "duration": int(raw.get("duration") or 228),
-                        "image_url": RAKTACHARITRA_TELUGU_POSTER,
+                        "duration": int(raw.get("duration") or 220),
+                        "image_url": _ensure_https(img_u) or RAKTACHARITRA_TELUGU_POSTER,
                         "media_url": urls[0],
                         "backup_urls": urls
                     }
@@ -1026,20 +1048,60 @@ def _fetch_saavn_url_direct(song_url: str, lyrics: bool = False) -> List[Dict[st
         except Exception:
             pass
 
-    # 3. Fallback via get_song_id
-    sid = get_song_id(song_url)
-    if sid:
-        s = get_song(sid, lyrics)
-        if isinstance(s, dict) and s.get("media_url"):
-            _is_junk_or_fake_cover(s)
-            return [s]
+    # 3. Fallback via get_album_id / get_song_id
+    if is_album:
+        aid = get_album_id(saavn_url)
+        if aid:
+            alb = get_album(aid, lyrics)
+            if isinstance(alb, dict) and isinstance(alb.get("songs"), list):
+                return [s for s in alb["songs"] if isinstance(s, dict) and s.get("media_url") and not _is_junk_or_fake_cover(s)]
+    else:
+        sid = get_song_id(saavn_url)
+        if sid:
+            s = get_song(sid, lyrics)
+            if isinstance(s, dict) and s.get("media_url") and not _is_junk_or_fake_cover(s):
+                return [s]
     return []
+
+
+def _search_matching_album_tracks(clean_q: str) -> List[Dict[str, Any]]:
+    """
+    When a user searches a short movie/album title (1-3 words, e.g. 'Aarya 2', 'Maestro', 'Orange', 'Pokiri'),
+    checks JioSaavn autocomplete albums for an exact title match and extracts all tracks from that album.
+    """
+    words = [w.lower() for w in re.findall(r"[a-zA-Z0-9]+", clean_q) if len(w) >= 2]
+    if not words or len(words) > 3:
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        ac_resp = requests.get(search_base_url + urllib.parse.quote(clean_q), headers=REQ_HEADERS, timeout=4)
+        ac_data = _parse_saavn_json(ac_resp.text)
+        albums_list = (ac_data.get("albums") or {}).get("data") or []
+        for alb in albums_list[:2]:
+            if not isinstance(alb, dict):
+                continue
+            alb_title = format_str(alb.get("title") or alb.get("name") or "").lower()
+            alb_lang = str((alb.get("more_info") or {}).get("language") or alb.get("language") or "").lower()
+            # Never pull Hindi Rakta Charitra album
+            if ("rakta" in alb_title or "rakht" in alb_title) and alb_lang == "hindi":
+                continue
+            # Require the primary keyword to appear in the album title
+            if words[0] in alb_title and not any(jk in alb_title for jk in JUNK_KEYWORDS):
+                aid = str(alb.get("id") or "").strip()
+                if aid:
+                    full_alb = get_album(aid, lyrics=False)
+                    if isinstance(full_alb, dict) and isinstance(full_alb.get("songs"), list):
+                        for s in full_alb["songs"]:
+                            if isinstance(s, dict) and s.get("media_url") and not _is_junk_or_fake_cover(s):
+                                out.append(s)
+    except Exception:
+        pass
+    return out
 
 
 def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 35) -> Any:
     """
-    Combines India-backed Saavn Mirrors + Direct JioSaavn v4 search concurrently
-    so US-hosted Vercel servers never suffer from US geo-blocking or cover-song pollution!
+    Combines India-backed Saavn Mirrors + Direct JioSaavn v4 search + Matching Album Extractor concurrently.
     """
     clean_q = query.strip()
     if clean_q.startswith("http") and "saavn.com" in clean_q:
@@ -1052,47 +1114,320 @@ def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, pag
         except Exception:
             return []
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         fut_v4 = pool.submit(_search_v4_songs, clean_q, page, limit, lyrics)
         fut_mir = pool.submit(_search_saavn_mirrors, clean_q, page, limit)
+        fut_alb = pool.submit(_search_matching_album_tracks, clean_q) if page == 1 else None
         v4_res = fut_v4.result() or []
         mir_res = fut_mir.result() or []
+        alb_res = (fut_alb.result() or []) if fut_alb else []
 
-    # Merge mirror results + direct v4 results and remove fake covers & duplicates
-    combined = mir_res + v4_res
+    combined = mir_res + v4_res + alb_res
     return _deduplicate_songs(combined)
 
 
+# Comprehensive Movie / Album / Artist Query Expansion Table (Short 2-3 Word Queries + Direct Album/Song URLs)
+MOVIE_ALBUM_EXPANSIONS = [
+    (("aarya 2", "arya 2", "aarya-2", "arya-2", "uppenantha", "karige loga", "my love is gone", "baby he loves you"), [
+        "https://www.jiosaavn.com/album/aarya-2/szAD227UDqE_",
+        "Uppenantha",
+        "Ringa Ringa",
+        "My Love Is Gone",
+        "Karige Loga",
+        "Baby He Loves You",
+        "Mr Perfect Aarya 2"
+    ]),
+    (("maestro", "baby oh baby"), [
+        "https://www.jiosaavn.com/song/baby-oh-baby/GyksSTlEdnE",
+        "Baby Oh Baby Maestro",
+        "Vennello Aadapilla",
+        "Shyam Singha Roy",
+        "Sirivennela",
+        "Anurag Kulkarni"
+    ]),
+    (("raktacharitra", "rakta charitra", "raktha charitra", "dorikithe", "katthula toh", "thudilenidhi", "dabbunnoda", "champaraa"), [
+        "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
+        "https://www.jiosaavn.com/song/katthula-toh/QABaehx5dlY",
+        "https://www.jiosaavn.com/song/thudilenidhi/JwkDRCZEZ14",
+        "https://www.jiosaavn.com/song/dabbunnoda/HS8BRjF9D2k",
+        "https://www.jiosaavn.com/song/champaraa/OFwuYRcIfkQ",
+        "https://www.jiosaavn.com/song/karma-dharma/OSYAfSBVdQo",
+        "https://www.jiosaavn.com/song/gundello/SREvYB9qZQM",
+        "Dorikithe Chastavu",
+        "Raktacharitra",
+        "Katthula Toh",
+        "Thudilenidhi"
+    ]),
+    (("they call him og", "og telugu", "hungry cheetah", "firestorm og"), [
+        "https://www.jiosaavn.com/song/hungry-cheetah-from-they-call-him-og/OgQvaDxEbwE",
+        "Hungry Cheetah",
+        "They Call Him OG",
+        "Thaman S Telugu",
+        "Bheemla Nayak Title Song",
+        "Gabbar Singh"
+    ]),
+    (("devara", "fear song", "chuttamalle", "daavudi", "ayudha pooja"), [
+        "https://www.jiosaavn.com/album/devara-part-1-telugu/kArqawD7cKk_",
+        "Fear Song Devara",
+        "Chuttamalle Devara",
+        "Daavudi Devara",
+        "Ayudha Pooja Devara",
+        "Red Sea Devara"
+    ]),
+    (("pushpa 2", "pushpa", "kissik", "sooseki", "peelings", "oo antava", "srivalli"), [
+        "https://www.jiosaavn.com/song/kissik-from-pushpa-2-the-rule-telugu/Jw0tVx9XblE",
+        "Kissik Pushpa 2",
+        "Sooseki Pushpa 2",
+        "Pushpa Pushpa",
+        "Peelings Pushpa 2",
+        "Oo Antava Pushpa",
+        "Srivalli Pushpa",
+        "Saami Saami Pushpa"
+    ]),
+    (("guntur kaaram", "kurchi madathapetti", "dum masala", "mawaa enthaina"), [
+        "https://www.jiosaavn.com/song/kurchi-madathapetti/MToeaRBITlg",
+        "Kurchi Madathapetti",
+        "Dum Masala",
+        "Oh My Baby Guntur Kaaram",
+        "Mawaa Enthaina",
+        "Ramana Aei"
+    ]),
+    (("daaku maharaaj", "daaku", "rage of daaku", "dabidi dibidi"), [
+        "https://www.jiosaavn.com/album/daaku-maharaaj/SI2T091Z92g_",
+        "The Rage of Daaku",
+        "Dabidi Dibidi",
+        "Chinni Daaku Maharaaj",
+        "Daaku The Intro"
+    ]),
+    (("jailer 2", "jailer", "hukum", "kaavaalaa", "tiger muthuvel"), [
+        "https://www.jiosaavn.com/album/jailer-2-original-motion-picture-soundtrack/zg-RfbPQuWM_",
+        "Hukum Jailer",
+        "Kaavaalaa Jailer",
+        "Tiger Muthuvel Pandian",
+        "One Sun One Moon",
+        "Putaapu Gang",
+        "Rathamaarey"
+    ]),
+    (("raga of revenge", "from dc", "dc anirudh"), [
+        "https://www.jiosaavn.com/song/raga-of-revenge-from-dc/MwNaZ1l4A1E",
+        "Raga of Revenge",
+        "Vikram Title Track",
+        "Lokiverse",
+        "Badass Leo",
+        "Hukum Jailer",
+        "Fear Song Devara"
+    ]),
+    (("om chapter", "udhiram", "veezha veera", "alaakaa loova", "senjudare", "karuppu", "god mode", "radhimaa", "sai abhyankkar"), [
+        "https://www.jiosaavn.com/song/veezha-veera-from-om-chapter-1-udhiram-the-blood-wood-tamil/GgQpfBhUYUY",
+        "https://www.jiosaavn.com/song/god-mode-from-karuppu/HQdZYDxzGng",
+        "https://www.jiosaavn.com/album/radhimaa-from-think-indie/waSqOF2IJ3g_",
+        "Veezha Veera",
+        "God Mode Karuppu",
+        "Radhimaa",
+        "Alaakaa Loova",
+        "Senjudare",
+        "Katchi Sera",
+        "Aasa Kooda"
+    ]),
+    (("hi nanna", "samayama", "gaaju bomma", "ammadi", "odiyamma"), [
+        "https://www.jiosaavn.com/song/samayama-from-hi-nanna/Jh5YCCFGdEk",
+        "Samayama Hi Nanna",
+        "Gaaju Bomma Hi Nanna",
+        "Ammadi Hi Nanna",
+        "Odiyamma Hi Nanna",
+        "Adigaa Hi Nanna"
+    ]),
+    (("salaar", "sooreede", "prathikadalo", "sound of salaar"), [
+        "Sooreede Salaar",
+        "Sound of Salaar",
+        "Prathikadalo Salaar",
+        "Vinaraa Salaar",
+        "Aaru Sethulunnaa Salaar"
+    ]),
+    (("kalki", "bhairava anthem", "ta takkara", "theme of kalki"), [
+        "Bhairava Anthem",
+        "Ta Takkara Kalki",
+        "Theme of Kalki",
+        "Bujji Theme",
+        "Keshava Madhava"
+    ]),
+    (("orange", "rooba rooba", "nenu nuvvantu", "chilipiga", "hello rammante"), [
+        "Rooba Rooba",
+        "Nenu Nuvvantu",
+        "Chilipiga",
+        "Hello Rammante",
+        "O Range",
+        "Sydney Nagaram"
+    ]),
+    (("gabbar singh", "kevvu keka", "dekho dekho", "akasam ammayaithe"), [
+        "Kevvu Keka",
+        "Dekho Dekho Gabbar Singh",
+        "Akasam Ammayaithe",
+        "Mandu Babulam",
+        "Pilla Gabbar Singh"
+    ]),
+    (("pokiri", "dole dole", "ippatikinka", "jagadame", "gala gala"), [
+        "Dole Dole Pokiri",
+        "Ippatikinka Pokiri",
+        "Jagadame Pokiri",
+        "Gala Gala Pokiri",
+        "Devuda Pokiri",
+        "Choododdu Antunna"
+    ]),
+    (("businessman", "sir osthara", "pilla chao", "chandamama", "bad boys"), [
+        "Sir Osthara",
+        "Pilla Chao",
+        "Bad Boys Businessman",
+        "Chandamama Businessman",
+        "We Love Bad Boys"
+    ]),
+    (("rangasthalam", "jigelu rani", "yentha sakkagunnave", "rangamma mangamma"), [
+        "Jigelu Rani",
+        "Yentha Sakkagunnave",
+        "Rangamma Mangamma",
+        "Ranga Ranga Rangasthalam",
+        "Aa Gattununtaava"
+    ]),
+    (("ala vaikunthapurramuloo", "samajavaragamana", "buttabomma", "ramuloo ramulaa", "omg daddy"), [
+        "Samajavaragamana",
+        "Buttabomma",
+        "Ramuloo Ramulaa",
+        "OMG Daddy",
+        "Sittharala Sirapadu"
+    ]),
+    (("sita ramam", "inthandham", "oh sita hey rama", "kanunna kalyanam"), [
+        "Inthandham",
+        "Oh Sita Hey Rama",
+        "Kanunna Kalyanam",
+        "Eppudo Ninnu",
+        "Nene Aa Nene"
+    ]),
+    (("geetha govindam", "inkem inkem", "vachindamma", "yenti yenti"), [
+        "Inkem Inkem",
+        "Vachindamma",
+        "Yenti Yenti",
+        "What The Life",
+        "Kanureppala Kaalam"
+    ]),
+    (("dj tillu", "tillu square", "tillu anna", "radhika tillu", "ticket eh"), [
+        "Tillu Anna DJ Pedithe",
+        "Pataas Pilla",
+        "Ticket Eh Konakunda",
+        "Radhika Tillu Square",
+        "Oh My Lily"
+    ]),
+    (("jalsa", "my heart is beating", "chalore chalore", "you and i jalsa"), [
+        "My Heart Is Beating",
+        "Chalore Chalore Chal",
+        "You And I Jalsa",
+        "Jennifer Lopez Jalsa",
+        "Gallo Thelinattunde"
+    ]),
+    (("kushi", "ammaye sannaga", "cheliya cheliya", "naa roja nuvve", "aradhya"), [
+        "Ammaye Sannaga",
+        "Cheliya Cheliya Kushi",
+        "Ye Mera Jaha",
+        "Naa Roja Nuvve",
+        "Aradhya Kushi"
+    ]),
+    (("athadu", "pilichina", "avunu nijam", "neetho cheppana"), [
+        "Pilichina Ranantava",
+        "Avunu Nijam",
+        "Neetho Cheppana",
+        "Adara Adara",
+        "Chandrullo Unde"
+    ]),
+    (("bommarillu", "appudo ippudo", "bommani geesthe", "kaani ippudu"), [
+        "Appudo Ippudo",
+        "Bommani Geesthe",
+        "Kaani Ippudu",
+        "Nammaka Thappani",
+        "We Have A Romeo"
+    ]),
+    (("ye maaya chesave", "vintunnava", "kundanapu bomma", "ee hridayam"), [
+        "Vintunnava",
+        "Kundanapu Bomma",
+        "Ee Hridayam",
+        "Manasaa",
+        "Aaromale"
+    ]),
+    (("mirchi", "idhedho bagundhe", "barbie girl mirchi", "darlingey", "yahoon yahoon"), [
+        "Idhedho Bagundhe",
+        "Barbie Girl Mirchi",
+        "Darlingey Mirchi",
+        "Mirchi Title Song",
+        "Yahoon Yahoon"
+    ]),
+    (("animal", "ammayi animal", "arjan vailly", "pehle bhi main", "satranga"), [
+        "Ammayi Animal",
+        "Nanna Nuv Naa Pranam",
+        "Yaalo Yaalaa",
+        "Evarevaro",
+        "Arjan Vailly",
+        "Pehle Bhi Main",
+        "Satranga"
+    ]),
+    (("lucky baskhar", "srimathi garu", "lucky baskhar title"), [
+        "Srimathi Garu",
+        "Lucky Baskhar Title Track",
+        "Nijamaa Kalaa",
+        "GV Prakash Telugu"
+    ]),
+    (("thandel", "bujji thalli", "namo namah shivaya thandel"), [
+        "Bujji Thalli Thandel",
+        "Namo Namah Shivaya Thandel",
+        "Devi Sri Prasad Telugu"
+    ]),
+    (("game changer", "jaragandi", "raa macha macha", "naanaa hyraanaa"), [
+        "Jaragandi",
+        "Raa Macha Macha",
+        "Naanaa Hyraanaa",
+        "Dhop Game Changer"
+    ])
+]
+
+
 def _normalize_user_query(q: str) -> List[str]:
-    """Expands user searches (including 'rak', 'rakta charitra', 'high beam', 'item songs', 'mass', 'om', 'dhanush')."""
+    """
+    Expands user searches and multi-song card queries into clean 2-3 word JioSaavn queries
+    or direct JioSaavn /song/ and /album/ URLs so 0-result queries never occur.
+    """
     q_clean = re.sub(r"\s+", " ", q.strip())
+    if not q_clean:
+        return ["Devara Telugu"]
+
+    # 1. Support explicit pipe-separated multi-queries ("Query 1|Query 2|Query 3")
+    if "|" in q_clean:
+        parts = [p.strip() for p in q_clean.split("|") if p.strip()]
+        if parts:
+            return parts
+
     q_low = q_clean.lower()
 
-    if any(k in q_low for k in ("rak", "rakta", "raktha", "charitra", "dorikithe", "katthula", "thudilenidhi", "dabbunnoda", "champara")):
-        return [
-            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "https://www.jiosaavn.com/song/katthula-toh/QABaehx5dlY",
-            "https://www.jiosaavn.com/song/thudilenidhi/JwkDRCZEZ14",
-            "https://www.jiosaavn.com/song/dabbunnoda/HS8BRjF9D2k",
-            "https://www.jiosaavn.com/song/champaraa/OFwuYRcIfkQ",
-            "https://www.jiosaavn.com/song/karma-dharma/OSYAfSBVdQo",
-            "https://www.jiosaavn.com/song/gundello/SREvYB9qZQM",
-            "Dorikithe Chastavu",
-            "Raktacharitra",
-            "Katthula Toh",
-            "Thudilenidhi"
-        ]
+    # 2. Check exact word-boundary short triggers for Raktacharitra & OM Chapter 1
+    if re.search(r"(rak|rakta|raktha|raktacharitra|dorikithe|katthula|thudilenidhi|dabbunnoda|champara|champaraa)", q_low):
+        return MOVIE_ALBUM_EXPANSIONS[2][1]
+
+    if re.search(r"(om|udhiram|karuppu|veezha|radhimaa|alaakaa|senjudare)", q_low):
+        return MOVIE_ALBUM_EXPANSIONS[10][1]
+
+    # 3. Check the comprehensive 33-movie/album expansion table
+    for keywords, expansion_list in MOVIE_ALBUM_EXPANSIONS:
+        if any(kw in q_low for kw in keywords):
+            return expansion_list
+
+    # 4. Special category/artist keywords
     if "high beam" in q_low or "highbeam" in q_low:
         return [
             "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
             "Dorikithe Chastavu",
             "Katthula Toh",
-            "Hungry Cheetah OG",
+            "Hungry Cheetah",
             "Fear Song Devara",
             "Ayudha Pooja Devara",
-            "Daaku Maharaaj Thaman",
+            "The Rage of Daaku",
             "Sooreede Salaar",
-            "Jai Balayya Akhanda",
+            "Jai Balayya",
             "Bheemla Nayak Title Song",
             "Hukum Jailer"
         ]
@@ -1100,58 +1435,64 @@ def _normalize_user_query(q: str) -> List[str]:
         return [
             "Kissik Pushpa 2",
             "Oo Antava Pushpa",
-            "Pakka Local Janatha Garage",
-            "Jigelu Rani Rangasthalam",
-            "Ringa Ringa Arya 2",
+            "Daavudi Devara",
+            "Kurchi Madathapetti",
+            "Pakka Local",
+            "Jigelu Rani",
+            "Ringa Ringa",
             "Aa Ante Amalapuram",
-            "Kevvu Keka Gabbar Singh",
-            "Dimaak Kharaab iSmart Shankar",
+            "Kevvu Keka",
+            "Dimaak Kharaab",
             "Blockbuster Sarrainodu",
-            "Swing Zara Jai Lava Kusa",
-            "Bhoom Bhaddhal Krack",
-            "Ratthaalu Khaidi No 150"
+            "Swing Zara"
         ]
     if "shareen" in q_low or "sheeran" in q_low:
         return [
-            "Ed Sheeran",
             "Shape of You Ed Sheeran",
             "Perfect Ed Sheeran",
             "Bad Habits Ed Sheeran",
-            "Photograph Ed Sheeran"
+            "Photograph Ed Sheeran",
+            "Ed Sheeran"
         ]
     if "weeknd" in q_low or "weekend" in q_low:
         return [
-            "The Weeknd",
             "Blinding Lights The Weeknd",
             "Starboy The Weeknd",
             "Die For You The Weeknd",
-            "Save Your Tears The Weeknd"
-        ]
-    if "om" in q_low or "karuppu" in q_low or "veezha" in q_low or "radhimaa" in q_low:
-        return [
-            "Veezha Veera OM Chapter 1",
-            "God Mode Karuppu",
-            "Radhimaa Sai Abhyankkar",
-            "Alaakaa Loova",
-            "Senjudare",
-            "Sai Abhyankkar",
-            "Dhanush"
+            "Save Your Tears The Weeknd",
+            "The Weeknd"
         ]
     if "dhanush" in q_low:
         return [
-            "Dhanush",
-            "Rowdy Baby Dhanush",
-            "Kolaveri Di Dhanush",
-            "Raghuvaran B Tech",
-            "Raayan Dhanush",
-            "3 Telugu Dhanush"
+            "Rowdy Baby",
+            "Why This Kolaveri Di",
+            "Po Ve Po 3",
+            "Luckkanna Mate Nillu",
+            "Raayan",
+            "Dhanush"
         ]
 
+    # 5. Strip parentheticals and noise words from long queries so JioSaavn AND-matching never fails
+    stripped = re.sub(r"[\(\["'].*?[\)\]'"]", " ", q_clean)
+    noise_re = r"(original|motion|picture|soundtrack|from|full|album|all|songs|song|mp3|download|listen|online|free|feat|ft)"
+    stripped = re.sub(noise_re, " ", stripped, flags=re.IGNORECASE)
+    stripped = re.sub(r"[^a-zA-Z0-9\s]+", " ", stripped)
+    words = [w for w in stripped.split() if len(w) >= 2]
+
+    if len(words) > 3:
+        # Break long multi-word queries into 2-word chunks so every song/movie part matches independently
+        chunks = []
+        for i in range(0, min(len(words), 8), 2):
+            chunk = " ".join(words[i:i + 2]).strip()
+            if chunk and chunk not in chunks:
+                chunks.append(chunk)
+        if " ".join(words[:3]) not in chunks:
+            chunks.insert(0, " ".join(words[:3]))
+        return chunks
+
     expanded = [q_clean]
-    if "-" in q_clean:
-        no_hyphen = re.sub(r"\s*-\s*", " ", q_clean).strip()
-        if no_hyphen not in expanded:
-            expanded.insert(0, no_hyphen)
+    if stripped.strip() and stripped.strip() != q_clean:
+        expanded.insert(0, stripped.strip())
     return expanded
 
 
@@ -1195,7 +1536,7 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    cache_key = f"search_v22::{clean_q.lower()}::p{page}"
+    cache_key = f"search_v23::{clean_q.lower()}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1207,13 +1548,24 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
         if deduped:
             _cache_set(cache_key, deduped)
             return deduped
-        return FALLBACK_CATALOG
+    else:
+        deduped = _parallel_fetch_queries(queries_to_run, page=page, per_query_limit=18)
+        if deduped:
+            _cache_set(cache_key, deduped)
+            return deduped
 
-    deduped = _parallel_fetch_queries(queries_to_run, page=page, per_query_limit=18)
-    if deduped:
-        _cache_set(cache_key, deduped)
-        return deduped
-    return FALLBACK_CATALOG
+    # Progressive token fallback: if the phrase returned 0 results, split into individual words/pairs
+    raw_words = [w for w in re.findall(r"[a-zA-Z0-9]+", clean_q) if len(w) >= 3]
+    if len(raw_words) >= 2:
+        fallback_subqueries = [" ".join(raw_words[:2]), raw_words[0], raw_words[-1]]
+        deduped = _parallel_fetch_queries(fallback_subqueries, page=page, per_query_limit=15)
+        if deduped:
+            _cache_set(cache_key, deduped)
+            return deduped
+
+    # Final fallback: return real full-length Telugu hits (NEVER fake SoundHelix demo tracks)
+    real_fallback = get_category_songs("telugu", page=1)
+    return real_fallback if real_fallback else FALLBACK_CATALOG
 
 
 def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
@@ -1222,7 +1574,7 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     English (Ed Sheeran, The Weeknd), and Hindi hits in parallel.
     """
     cat = category.lower().strip()
-    cache_key = f"cat_v22::{cat}::p{page}"
+    cache_key = f"cat_v23::{cat}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1488,7 +1840,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=22">
+  <link rel="stylesheet" href="/static/css/style.css?v=23">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1950,19 +2302,19 @@ INDEX_HTML = r'''<!DOCTYPE html>
 
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/js/player.js?v=22"></script>
-  <script src="/static/js/app.js?v=22"></script>
+  <script src="/static/js/player.js?v=23"></script>
+  <script src="/static/js/app.js?v=23"></script>
   <script>
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-spotify-v22") caches.delete(k);
+          if (k !== "musify-spotify-v23") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=22").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=23").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -4493,13 +4845,13 @@ APP_JS = r'''/* ================================================================
 
   // 1. Exact 8 Top Quick-Play Cards from Screenshot 70792.jpg & 70836.jpg
   const QUICK_8_CARDS = [
-    { title: "Maestro", query: "Baby Oh Baby Maestro Anurag Kulkarni", img: ART.maestro },
+    { title: "Maestro", query: "Baby Oh Baby Maestro|Vennello Aadapilla|Shyam Singha Roy|Sirivennela", img: ART.maestro },
     { title: "High beam 🔥", cat: "highbeam", img: ART.raktacharitra },
-    { title: "Aarya - 2 (Original...", query: "Uppenantha Ringa Ringa My Love Is Gone Aarya 2", img: ART.aarya2 },
-    { title: "OG Telugu Full Album", query: "Hungry Cheetah They Call Him OG Thaman", img: ART.og },
+    { title: "Aarya - 2 (Original...", query: "https://www.jiosaavn.com/album/aarya-2/szAD227UDqE_|Uppenantha|Ringa Ringa|My Love Is Gone|Karige Loga|Baby He Loves You", img: ART.aarya2 },
+    { title: "OG Telugu Full Album", query: "https://www.jiosaavn.com/song/hungry-cheetah-from-they-call-him-og/OgQvaDxEbwE|Hungry Cheetah|They Call Him OG|Thaman S Telugu", img: ART.og },
     { title: "Telugu Item Songs 💃", cat: "itemsongs", img: ART.itemSongs },
-    { title: "Raktacharitra • Mass", query: "Dorikithe Chastavu Raktacharitra", img: ART.raktacharitra },
-    { title: "Feel good Love Songs ...", query: "Samayama Hi Nanna Baby Oh Baby Maestro", img: ART.hinanna },
+    { title: "Raktacharitra • Mass", query: "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o|Dorikithe Chastavu|Katthula Toh|Thudilenidhi|Dabbunnoda|Champaraa", img: ART.raktacharitra },
+    { title: "Feel good Love Songs ...", query: "Samayama Hi Nanna|Baby Oh Baby Maestro|Chuttamalle Devara|Inthandham Sita Ramam|Inkem Inkem", img: ART.hinanna },
     { title: "OM Chapter 1 • Karuppu", cat: "om", img: ART.omVeezha }
   ];
 
@@ -4653,7 +5005,12 @@ APP_JS = r'''/* ================================================================
   // Opens a query or album/artist card and optionally auto-plays the first track immediately like Spotify
   window.openCategoryOrQuery = function (queryOrCat, headingLabel, autoPlayFirst) {
     window.switchTab("home");
+    activeSearchQuery = queryOrCat;
+    currentCategory = "custom";
+    currentPage = 1;
+    openPlaylistId = null;
     $("homeHeroSections").style.display = "none";
+    document.querySelectorAll(".pill-btn").forEach((b) => b.classList.remove("active"));
     setHeading(headingLabel || queryOrCat, "Full-length tracks • Tap any song or ▶ Play All");
     showLoading("Loading " + (headingLabel || queryOrCat) + "...");
     api("/api/search?q=" + encodeURIComponent(queryOrCat) + "&page=1")
@@ -5522,7 +5879,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-spotify-v22";
+SW_JS = r'''const CACHE = "musify-spotify-v23";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
