@@ -1255,13 +1255,7 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
 
 
 # =====================================================================
-# PART 3 - SPOTIFY MOBILE & DESKTOP UI WITH VIDEO CANVAS, SWIPE & LYRICS
-# Matches Screenshots 1-5:
-#  - Home with Avatar + All/Music/Podcasts/Language pills + 2x4 Quick Grid
-#  - "It's New Music Friday!" & "Jump back in" horizontal carousels
-#  - Floating Mini-Player with Swipe Left (Next) / Swipe Right (Previous)
-#  - Full-Screen Video Canvas Player (<video> background + swipe left/right)
-#  - Scrollable Lyrics Preview Card + Show Lyrics + About the Artist + Explore + Credits
+# PART 3 - 1:1 SPOTIFY MOBILE UI (MATCHING SCREENSHOTS 70792 - 70798)
 # =====================================================================
 
 INDEX_HTML = r'''<!DOCTYPE html>
@@ -1270,7 +1264,6 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta id="vpMeta" name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <script>
-    // Accurately size both width and height (--vh-full) whether Mobile or "Desktop site" mode is active
     (function() {
       function syncViewportVars() {
         var isTouch = ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
@@ -1297,7 +1290,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=17">
+  <link rel="stylesheet" href="/static/css/style.css?v=18">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1306,152 +1299,191 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <audio id="audio" preload="auto" playsinline></audio>
 
   <div class="app-container">
-
-    <!-- Desktop Sidebar / Mobile Library Drawer -->
-    <aside class="sidebar" id="sidebar">
-      <div class="spotify-box nav-box">
-        <div class="brand">
-          <div class="brand-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg>
-          </div>
-          <div class="brand-name">Musify</div>
-        </div>
-        <nav class="nav-section">
-          <a class="nav-link active" onclick="loadCategory('home')">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3l9-8z"/></svg>
-            <span>Home</span>
-          </a>
-          <a class="nav-link" onclick="openSearchView()">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <span>Search</span>
-          </a>
-          <a class="nav-link" onclick="openLikedSongs()">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="#1db954"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-            <span>Liked Songs</span>
-            <span id="likedCountBadge" class="song-badge">0</span>
-          </a>
-        </nav>
-      </div>
-
-      <div class="spotify-box library-box">
-        <div class="playlist-header">
-          <span>Your Library</span>
-          <button id="btnNewPlaylist" class="btn-icon-small" title="Create Playlist">+</button>
-        </div>
-        <div id="userProfileCard" class="user-profile-card" onclick="openProfileModal()">
-          <div id="userAvatar" class="user-avatar">P</div>
-          <div class="user-profile-info">
-            <div id="userNameDisplay" class="user-name-display">Listener</div>
-            <div id="userAgeDisplay" class="user-age-display">Tap to edit profile</div>
-          </div>
-        </div>
-        <div id="sidebarPlaylists" class="sidebar-playlists"></div>
-      </div>
-    </aside>
-
-    <!-- Main View (Matches Screenshot 70501.jpg) -->
     <main class="main-area" id="mainArea">
 
-      <!-- Top Bar: Avatar + All / Music / Podcasts / Languages Pills -->
-      <header class="top-bar">
-        <div id="topBarAvatar" class="top-avatar" onclick="openProfileModal()" title="Profile">P</div>
-        <div class="category-pills">
-          <button class="pill-btn active" data-category="home">All</button>
-          <button class="pill-btn" data-category="telugu">Telugu New</button>
-          <button class="pill-btn" data-category="om">OM • Dhanush</button>
-          <button class="pill-btn" data-category="english">English • Weeknd & Ed</button>
-          <button class="pill-btn" data-category="hindi">Hindi Hits</button>
-          <button class="pill-btn" data-category="love">💕 Love</button>
-          <button class="pill-btn" data-category="sad">💔 Heartbreak</button>
-          <button class="pill-btn" data-category="mass">🔥 Mass Beats</button>
-          <button class="pill-btn" data-category="chill">😌 Chill & Feel Good</button>
-          <button class="pill-btn" data-category="workout">💪 Workout</button>
-          <button class="pill-btn" data-category="drive">🚗 Night Drive</button>
-          <button class="pill-btn" data-category="party">🎉 Party DJ</button>
-          <button class="pill-btn" data-category="evergreen">🌟 90s/2000s Evergreen</button>
-          <button class="pill-btn" data-category="devotional">🙏 Devotional</button>
-          <button class="pill-btn" data-category="punjabi">Punjabi</button>
-        </div>
-      </header>
+      <!-- =============================================================
+           TAB 1: HOME VIEW (Matches Screenshots 70792, 70793, 70794)
+           ============================================================= -->
+      <div id="homeView" class="tab-view active-view">
+        <header class="top-bar">
+          <div id="topBarAvatar" class="top-avatar" onclick="openProfileModal()">P</div>
+          <div class="category-pills">
+            <button class="pill-btn active" data-category="home">All</button>
+            <button class="pill-btn" data-category="telugu">Music</button>
+            <button class="pill-btn" data-category="trending">Podcasts</button>
+            <button class="pill-btn" data-category="om">OM • Dhanush</button>
+            <button class="pill-btn" data-category="english">English</button>
+            <button class="pill-btn" data-category="hindi">Hindi</button>
+          </div>
+        </header>
 
-      <!-- Collapsible Search Bar -->
-      <div id="searchBarWrap" class="search-bar-wrap">
-        <div class="search-box">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b3b3b3" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="query" placeholder="What do you want to listen to?" autocomplete="off">
-          <button id="btnClearSearch" class="btn-clear-search" onclick="clearSearchInput()">&times;</button>
+        <div class="view-scroll" id="contentScroll">
+          <div id="homeHeroSections">
+            <!-- 1. 2x4 Quick Tiles Grid (Maestro, High beam, Aarya - 2, OG Telugu, Radhimaa, Ballari baava, Feel good, Karuppu) -->
+            <div id="quickTilesGrid" class="quick-tiles-grid"></div>
+
+            <!-- 2. "Picked for you" Featured Card (Screenshot 70792.jpg) -->
+            <div class="home-section">
+              <h2 class="section-title">Picked for you</h2>
+              <div id="pickedForYouCard" class="picked-card"></div>
+            </div>
+
+            <!-- 3. "For fans of Anirudh Ravichander" (Screenshots 70792 & 70793) -->
+            <div class="home-section">
+              <div class="fan-header" onclick="openCategoryOrQuery('Anirudh Ravichander', 'Anirudh Ravichander')">
+                <img id="fanHeaderAvatar" class="fan-avatar" src="https://c.saavncdn.com/artists/Anirudh_Ravichander_002_20230601072606_500x500.jpg" onerror="this.src='https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80'" alt="">
+                <div>
+                  <div class="fan-sub">For fans of</div>
+                  <div class="fan-title">Anirudh Ravichander</div>
+                </div>
+              </div>
+              <div id="anirudhRow" class="horiz-scroll-row"></div>
+            </div>
+
+            <!-- 4. "More of what you like" (Screenshot 70793.jpg) -->
+            <div class="home-section">
+              <h2 class="section-title">More of what you like</h2>
+              <div id="newMusicRow" class="horiz-scroll-row"></div>
+            </div>
+
+            <!-- 5. "Jump back in" (Screenshot 70794.jpg) -->
+            <div class="home-section">
+              <h2 class="section-title">Jump back in</h2>
+              <div id="jumpBackRow" class="horiz-scroll-row"></div>
+            </div>
+
+            <!-- 6. "Happy" (Screenshot 70794.jpg) -->
+            <div class="home-section">
+              <h2 class="section-title">Happy</h2>
+              <div id="hindiHeroRow" class="horiz-scroll-row"></div>
+            </div>
+
+            <!-- 7. "Your favourite artists" (Screenshot 70794.jpg) -->
+            <div class="home-section">
+              <h2 class="section-title">Your favourite artists</h2>
+              <div id="singersRow" class="singers-scroll-row"></div>
+            </div>
+          </div>
+
+          <!-- Dynamic Category / Playlist / Feed Header & Songs -->
+          <div class="view-header">
+            <h1 id="heading" class="view-heading">Recommended for you</h1>
+            <p id="subheading" class="view-subheading">Full-length Telugu, English & Hindi streams</p>
+          </div>
+          <div id="content"></div>
         </div>
       </div>
 
-      <!-- Scrollable Home & Discovery Content -->
-      <section class="content-scroll" id="contentScroll">
-
-        <!-- Home Exclusive Sections (2x4 Grid + All Singers Hub + All Moods Hub + Carousels) -->
-        <div id="homeHeroSections">
-          <!-- 8 Compact 2-Column Rectangular Tiles -->
-          <div id="quickTilesGrid" class="quick-tiles-grid"></div>
-
-          <!-- Popular Singers Circular Hub (30+ Telugu, Hindi, Tamil & Global Artists) -->
-          <div class="home-section">
-            <h2 class="section-title">Popular Singers • All Songs</h2>
-            <div id="singersRow" class="singers-scroll-row"></div>
+      <!-- =============================================================
+           TAB 2: SEARCH VIEW (Matches Screenshots 70795, 70796, 70797)
+           ============================================================= -->
+      <div id="searchView" class="tab-view">
+        <header class="tab-top-header">
+          <div class="tab-header-left">
+            <div id="searchTabAvatar" class="top-avatar" onclick="openProfileModal()">P</div>
+            <h1 class="tab-big-title">Search</h1>
           </div>
+          <button class="np-icon-btn" onclick="document.getElementById('query').focus()" title="Search">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </button>
+        </header>
 
-          <!-- All Moods & Vibes Grid -->
-          <div class="home-section">
-            <h2 class="section-title">Listen by Mood & Vibe</h2>
-            <div id="moodsGrid" class="moods-grid"></div>
-          </div>
-
-          <!-- Horizontal Carousel 1: New Telugu & OM Chapter 1 Hits -->
-          <div class="home-section">
-            <h2 class="section-title">New Telugu & OM Chapter 1 Hits</h2>
-            <div id="newMusicRow" class="horiz-scroll-row"></div>
-          </div>
-
-          <!-- Horizontal Carousel 2: Ed Sheeran, The Weeknd & Trending English -->
-          <div class="home-section">
-            <h2 class="section-title">Ed Sheeran, The Weeknd & English Hits</h2>
-            <div id="jumpBackRow" class="horiz-scroll-row"></div>
-          </div>
-
-          <!-- Horizontal Carousel 3: New & Trending Hindi Chartbusters -->
-          <div class="home-section">
-            <h2 class="section-title">Trending Hindi Chartbusters</h2>
-            <div id="hindiHeroRow" class="horiz-scroll-row"></div>
+        <!-- Big White Spotify Search Input Box -->
+        <div class="spotify-white-search-wrap">
+          <div class="spotify-white-search">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#121212" stroke-width="2.4"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="query" placeholder="What do you want to listen to?" autocomplete="off">
+            <button id="btnClearSearch" class="btn-clear-white-search" onclick="clearSearchInput()">&times;</button>
           </div>
         </div>
 
-        <div class="view-header">
-          <h1 id="heading" class="view-heading">Recommended for today</h1>
-          <p id="subheading" class="view-subheading">Swipe left/right on the player to change songs</p>
+        <div class="view-scroll" id="searchScroll">
+          <!-- Live Search Results Container (Shown when typing) -->
+          <div id="searchResultsBox" style="display:none;">
+            <h2 id="searchResultsHeading" class="section-title" style="margin-top:8px;">Results</h2>
+            <div id="searchResultsList"></div>
+          </div>
+
+          <!-- Default Browse Categories & Discover Something New (Screenshots 70795-70797) -->
+          <div id="searchBrowseSection">
+            <div id="searchTopTilesGrid" class="browse-tiles-grid"></div>
+
+            <div class="home-section" style="margin-top:22px;">
+              <h2 class="section-title">Discover something new</h2>
+              <div id="discoverReelsRow" class="discover-reels-row"></div>
+            </div>
+
+            <div class="home-section" style="margin-top:22px;">
+              <h2 class="section-title">Browse all</h2>
+              <div id="searchBrowseAllGrid" class="browse-tiles-grid"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============================================================
+           TAB 3: YOUR LIBRARY VIEW (Matches Screenshot 70798.jpg)
+           ============================================================= -->
+      <div id="libraryView" class="tab-view">
+        <header class="tab-top-header">
+          <div class="tab-header-left">
+            <div id="libTabAvatar" class="top-avatar" onclick="openProfileModal()">P</div>
+            <h1 class="tab-big-title">Your Library</h1>
+          </div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <button class="np-icon-btn" onclick="switchTab('search'); document.getElementById('query').focus()" title="Search Library">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </button>
+            <button id="btnNewPlaylist" class="np-icon-btn" title="Create Playlist">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><line x1="12" y1="4" x2="12" y2="20"/><line x1="4" y1="12" x2="20" y2="12"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="lib-pills-row">
+          <button class="lib-pill active" onclick="filterLibraryItems('all', this)">Playlists</button>
+          <button class="lib-pill" onclick="filterLibraryItems('albums', this)">Albums</button>
+          <button class="lib-pill" onclick="filterLibraryItems('artists', this)">Artists</button>
         </div>
 
-        <!-- Main Song Grid / Playlist View -->
-        <div id="content"></div>
-      </section>
+        <div class="view-scroll" id="libraryScroll">
+          <!-- User's Custom Created Playlists + Liked Songs + Curated Albums (Screenshot 70798.jpg) -->
+          <div id="libraryItemsList" class="library-list"></div>
+        </div>
+      </div>
 
-      <!-- Floating Spotify Mini-Player Bar (Screenshot 70501.jpg bottom) -->
+      <!-- Hidden Legacy Sidebar Container for JS compatibility -->
+      <div id="sidebar" style="display:none;">
+        <div id="userProfileCard"></div>
+        <div id="userAvatar"></div>
+        <div id="userNameDisplay"></div>
+        <div id="userAgeDisplay"></div>
+        <span id="likedCountBadge"></span>
+        <div id="sidebarPlaylists"></div>
+        <div id="moodsGrid"></div>
+      </div>
+
+      <!-- =============================================================
+           CRIMSON FLOATING MINI-PLAYER BAR (Matches Screenshots 70792-70798)
+           ============================================================= -->
       <div id="miniPlayer" class="mini-player" onclick="openNowPlayingSheet(event)">
-        <div class="mini-banner-hint" id="miniBannerHint">Similar to the album you chose • Swipe left/right to change song</div>
         <div class="mini-player-main">
           <img id="playerImg" class="mini-thumb" src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80" alt="">
           <div class="mini-info">
-            <div id="playerTitle" class="mini-title">Tap a song to start</div>
+            <div id="playerTitle" class="mini-title">Baby Oh Baby</div>
             <div class="mini-artist-row">
-              <span class="sparkle-badge">✦</span>
-              <span id="playerArtist" class="mini-artist">Swipe left for next • Swipe right for previous</span>
+              <span id="playerArtist" class="mini-artist">Mahati Swara Sagar, Anurag Kulkarni</span>
             </div>
           </div>
           <div class="mini-actions" onclick="event.stopPropagation()">
             <button class="mini-icon-btn" onclick="openNowPlayingSheet()" title="Video & Lyrics">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="14" height="14" rx="2"/><rect x="18" y="3" width="4" height="18" rx="1"/><circle cx="9" cy="12" r="2.5"/></svg>
             </button>
-            <button id="btnMiniLike" class="mini-icon-btn" onclick="toggleLikeCurrent()" title="Add to Liked Songs">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            <button id="btnMiniLike" class="mini-icon-btn" onclick="toggleLikeCurrent()" title="Save to Liked Songs">
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
             </button>
             <button id="btnPlay" class="mini-play-btn" title="Play / Pause">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
             </button>
           </div>
         </div>
@@ -1464,18 +1496,14 @@ INDEX_HTML = r'''<!DOCTYPE html>
   </div>
 
   <!-- =================================================================
-       FULL-SCREEN SPOTIFY CANVAS VIDEO & LYRICS SHEET (Screenshots 2-5)
-       Swipe Left = Next Song | Swipe Right = Previous Song
-       Scroll Down = Lyrics Preview + About the Artist + Explore + Credits
+       FULL-SCREEN SPOTIFY VIDEO CANVAS & VOICE-SYNCED LYRICS SHEET
        ================================================================= -->
   <div id="nowPlayingSheet" class="np-sheet">
-    <!-- Full-Bleed Looping Canvas Video Background -->
     <div id="npSwipeZone" class="np-video-stage">
       <video id="canvasVideo" class="np-canvas-video" autoplay loop muted playsinline preload="auto"></video>
       <img id="npBackdropImg" class="np-backdrop-img" src="" alt="">
       <div class="np-video-gradient"></div>
 
-      <!-- Top Header inside Full-Screen Player -->
       <div class="np-top-bar">
         <button class="np-icon-btn" onclick="closeNowPlayingSheet()" title="Back to Musify Home" style="background:rgba(0,0,0,0.4);padding:6px 12px;border-radius:99px;font-size:12.5px;font-weight:700;">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1496,15 +1524,11 @@ INDEX_HTML = r'''<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- Clean video stage (no middle banner blocking the video) -->
       <div id="npSwipeIndicator" style="display:none;"></div>
 
-      <!-- Bottom Overlay on Video Stage (Live Floating Lyric + Track Info + Controls) -->
       <div class="np-stage-bottom">
-        <!-- Live Floating Lyric Line over Video (Screenshot 70502.jpg) -->
         <div id="npFloatingLyric" class="np-floating-lyric" onclick="scrollToLyricsCard()"></div>
 
-        <!-- Track Info Row (Thumbnail + Title/Artist + X + Plus) -->
         <div class="np-track-row">
           <img id="npThumb" class="np-track-thumb" src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80" alt="">
           <div class="np-track-text">
@@ -1522,7 +1546,6 @@ INDEX_HTML = r'''<!DOCTYPE html>
           </button>
         </div>
 
-        <!-- Scrubber Seek Bar -->
         <div class="np-scrubber-wrap">
           <input type="range" id="progressBar" class="np-range-slider" min="0" max="100" step="0.1" value="0">
           <div class="np-time-row">
@@ -1531,7 +1554,6 @@ INDEX_HTML = r'''<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- Main Transport Controls (Shuffle, Prev, Big White Circle Play/Pause, Next, Repeat) -->
         <div class="np-controls-row">
           <button id="btnShuffle" class="np-ctrl-btn active" title="Shuffle">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
@@ -1549,12 +1571,11 @@ INDEX_HTML = r'''<!DOCTYPE html>
             <svg width="30" height="30" viewBox="0 0 24 24" fill="#fff"><polygon points="5 4 15 12 5 20 5 4"/><rect x="16.5" y="4" width="2.5" height="16" fill="#fff"/></svg>
           </button>
 
-          <button id="btnRepeat" class="np-ctrl-btn" title="Repeat / Timer">
+          <button id="btnRepeat" class="np-ctrl-btn" title="Repeat">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="13" r="8"/><polyline points="12 9 12 13 15 15"/><line x1="9" y1="2" x2="15" y2="2"/></svg>
           </button>
         </div>
 
-        <!-- Secondary Bottom Actions Row (Lyrics, Download, Share, Queue) -->
         <div class="np-sub-actions">
           <button class="np-icon-btn" onclick="scrollToLyricsCard()" title="Lyrics & Info" style="font-size:12px;font-weight:700;gap:6px;">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="12" cy="12" r="3"/></svg>
@@ -1576,23 +1597,13 @@ INDEX_HTML = r'''<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Scrollable Cards Below Video Stage (Screenshots 70503.jpg & 70504.jpg) -->
     <div class="np-below-fold">
-
-      <!-- 1. Lyrics Preview Card (Screenshot 70503.jpg) -->
       <div id="lyricsPreviewCard" class="np-lyrics-card">
-        <div class="np-card-header">
-          <span>Lyrics preview</span>
-        </div>
-        <div id="lyricsContent" class="np-lyrics-body">
-          Tap any song to load live lyrics here...
-        </div>
-        <button id="btnExpandLyrics" class="np-show-lyrics-pill" onclick="toggleExpandLyrics()">
-          Show lyrics
-        </button>
+        <div class="np-card-header"><span>Lyrics preview</span></div>
+        <div id="lyricsContent" class="np-lyrics-body">Tap any song to load live voice-synced lyrics...</div>
+        <button id="btnExpandLyrics" class="np-show-lyrics-pill" onclick="toggleExpandLyrics()">Show lyrics</button>
       </div>
 
-      <!-- 2. About the Artist Card (Screenshots 70503.jpg & 70504.jpg) -->
       <div class="np-info-card">
         <div class="np-artist-banner-wrap">
           <img id="npArtistBannerImg" class="np-artist-banner" src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80" alt="">
@@ -1603,25 +1614,21 @@ INDEX_HTML = r'''<!DOCTYPE html>
             <div>
               <div class="np-artist-name-verified">
                 <span id="npAboutArtistName">Artist</span>
-                <span class="verified-check" title="Verified Artist">✔</span>
+                <span class="verified-check">✔</span>
               </div>
               <div class="np-monthly-listeners">41.3L monthly listeners</div>
             </div>
             <button class="np-follow-btn" onclick="this.textContent = this.textContent === 'Follow' ? 'Following' : 'Follow'">Follow</button>
           </div>
-          <p id="npArtistBio" class="np-artist-bio">
-            Featured film composer, music producer, playback vocalist, and songwriter streaming in high-definition audio on Musify.
-          </p>
+          <p id="npArtistBio" class="np-artist-bio">Featured composer, vocalist, and producer streaming in full-length HD audio on Musify.</p>
         </div>
       </div>
 
-      <!-- 3. Explore Artist 3-Card Row (Screenshot 70504.jpg) -->
       <div class="np-info-card np-padded-card">
         <h3 id="npExploreHeading" class="np-section-heading">Explore Artist</h3>
         <div id="npExploreGrid" class="np-explore-grid"></div>
       </div>
 
-      <!-- 4. Credits Card (Screenshot 70504.jpg) -->
       <div class="np-info-card np-padded-card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <h3 class="np-section-heading" style="margin:0;">Credits</h3>
@@ -1629,7 +1636,6 @@ INDEX_HTML = r'''<!DOCTYPE html>
         </div>
         <div id="npCreditsList" class="np-credits-list"></div>
       </div>
-
     </div>
   </div>
 
@@ -1645,43 +1651,31 @@ INDEX_HTML = r'''<!DOCTYPE html>
     <div id="queueList" class="queue-list"></div>
   </div>
 
-  <!-- Hidden volume elements for compatibility -->
-  <div style="display:none;">
-    <input type="range" id="volumeBar" min="0" max="1" step="0.01" value="0.85">
-    <button id="btnVolume"></button>
-    <div id="lyricsBox"></div>
-    <button id="btnLyricsToggle"></button>
-    <button id="btnCloseLyrics"></button>
-    <span id="lyricsSongTitle"></span>
-    <span id="lyricsSongArtist"></span>
-    <img id="lyricsThumb" alt="">
-  </div>
-
-  <!-- Bottom 5-Tab Navigation Bar (Matches Screenshot 70501.jpg) -->
+  <!-- Bottom 5-Tab Navigation Bar (Matches Screenshots 70792 - 70798) -->
   <nav class="mobile-bottom-nav">
-    <button class="mob-tab active" id="tabHome" onclick="closeNowPlayingSheet(); loadCategory('home')">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3l9-8z"/></svg>
+    <button class="mob-tab active" id="tabHome" onclick="switchTab('home')">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3l9-8z"/></svg>
       <span>Home</span>
     </button>
-    <button class="mob-tab" id="tabSearch" onclick="closeNowPlayingSheet(); openSearchView()">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <button class="mob-tab" id="tabSearch" onclick="switchTab('search')">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span>Search</span>
     </button>
-    <button class="mob-tab" id="tabLibrary" onclick="closeNowPlayingSheet(); toggleMobileSidebar()">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="4" y1="4" x2="4" y2="20"/><line x1="9" y1="4" x2="9" y2="20"/><line x1="14" y1="6" x2="19" y2="20"/></svg>
+    <button class="mob-tab" id="tabLibrary" onclick="switchTab('library')">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="4" y1="4" x2="4" y2="20"/><line x1="9" y1="4" x2="9" y2="20"/><line x1="14" y1="5" x2="19" y2="20"/></svg>
       <span>Your Library</span>
     </button>
-    <button class="mob-tab" id="tabLyrics" onclick="openNowPlayingSheet(); setTimeout(scrollToLyricsCard, 250)">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8 10c2.5-1 5.5-1 8 0M8.5 13c2-0.8 5-0.8 7 0M9.5 16c1.5-0.5 3.5-0.5 5 0" stroke="#000" stroke-width="1.6" fill="none"/></svg>
-      <span>Lyrics</span>
+    <button class="mob-tab" id="tabLyrics" onclick="openNowPlayingSheet(); setTimeout(scrollToLyricsCard, 200)">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8 10c2.5-1 5.5-1 8 0M8.5 13c2-0.8 5-0.8 7 0M9.5 16c1.5-0.5 3.5-0.5 5 0" stroke="#000" stroke-width="1.6" fill="none"/></svg>
+      <span>Premium</span>
     </button>
-    <button class="mob-tab" id="tabCreate" onclick="closeNowPlayingSheet(); document.getElementById('btnNewPlaylist').click()">
+    <button class="mob-tab" id="tabCreate" onclick="document.getElementById('btnNewPlaylist').click()">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="4" x2="12" y2="20"/><line x1="4" y1="12" x2="20" y2="12"/></svg>
       <span>Create</span>
     </button>
   </nav>
 
-  <!-- Modal: Create Playlist -->
+  <!-- Modals -->
   <div id="createPlaylistModal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
@@ -1691,7 +1685,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
       <form id="formCreatePlaylist">
         <div class="form-group">
           <label for="playlistNameInput">Playlist Name *</label>
-          <input type="text" id="playlistNameInput" placeholder="e.g. Telugu Melodies, Gym Mix" required>
+          <input type="text" id="playlistNameInput" placeholder="e.g. High beam, Telugu Vibes" required>
         </div>
         <div class="form-group">
           <label for="playlistDescInput">Description (Optional)</label>
@@ -1705,7 +1699,6 @@ INDEX_HTML = r'''<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- Modal: Add Song to Playlist -->
   <div id="addToPlaylistModal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
@@ -1725,18 +1718,17 @@ INDEX_HTML = r'''<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- Modal: Quick Welcome Onboarding (Name & Age Only) -->
   <div id="welcomeModal" class="modal-overlay">
     <div class="modal-card welcome-card">
       <div class="welcome-badge">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg>
       </div>
       <h2 class="welcome-title">Welcome to Musify</h2>
-      <p class="welcome-subtitle">No login needed! Enter your name and age to start streaming with live video backgrounds, swipe song switching, and lyrics.</p>
+      <p class="welcome-subtitle">Enter your name and age to start streaming full-length songs with live lyrics and background video.</p>
       <form id="formWelcomeProfile">
         <div class="form-group">
           <label for="userNameInput">Your Name *</label>
-          <input type="text" id="userNameInput" placeholder="e.g. Pranav, Karthik, Priya" required autocomplete="name">
+          <input type="text" id="userNameInput" placeholder="e.g. Pavan, Rahul, Karthik" required autocomplete="name">
         </div>
         <div class="form-group" style="margin-top: 12px;">
           <label for="userAgeInput">Your Age *</label>
@@ -1751,24 +1743,21 @@ INDEX_HTML = r'''<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- Toast Notification Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <!-- Scripts -->
-  <script src="/static/js/player.js?v=17"></script>
-  <script src="/static/js/app.js?v=17"></script>
+  <script src="/static/js/player.js?v=18"></script>
+  <script src="/static/js/app.js?v=18"></script>
   <script>
-    // Force-clear any old desktop cached assets from previous service workers
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-real-hits-v17") caches.delete(k);
+          if (k !== "musify-spotify-exact-v18") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=17").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=18").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -1777,27 +1766,21 @@ INDEX_HTML = r'''<!DOCTYPE html>
 '''
 
 STYLE_CSS = r'''/* ==========================================================================
-   Musify • 1:1 Spotify Mobile & Desktop Stylesheet (Matching Screenshots 1-5)
+   Musify • 1:1 Spotify Mobile App UI (Matching Screenshots 70792 - 70798)
    ========================================================================== */
 
 :root {
   --bg-black: #000000;
   --bg-main: #121212;
   --bg-card: #1f1f1f;
-  --bg-card-hover: #2a2a2a;
+  --bg-card-hover: #282828;
   --bg-tinted: rgba(255, 255, 255, 0.08);
-  --bg-tinted-hover: rgba(255, 255, 255, 0.15);
   --border-color: rgba(255, 255, 255, 0.1);
   --text-main: #ffffff;
   --text-muted: #b3b3b3;
   --text-dim: #777777;
   --accent: #1db954;
-  --accent-hover: #1ed760;
   --danger: #f15e6c;
-  --sidebar-width: 260px;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
   --transition: all 0.2s ease;
 }
 
@@ -1808,11 +1791,13 @@ STYLE_CSS = r'''/* =============================================================
   -webkit-tap-highlight-color: transparent;
 }
 
-body {
+html, body {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background-color: var(--bg-black);
+  background-color: var(--bg-main);
   color: var(--text-main);
-  overflow: hidden;
   height: var(--vh-full, 100dvh);
   display: flex;
   flex-direction: column;
@@ -1822,177 +1807,47 @@ body {
 .app-container {
   display: flex;
   flex: 1;
+  width: 100%;
   height: calc(var(--vh-full, 100dvh) - 56px);
-  position: relative;
   overflow: hidden;
 }
 
-/* --- Full-Bleed Edge-to-Edge Mobile Layout (Zero Black Sidebars) --- */
-html, body {
-  width: 100%;
-  max-width: 100vw;
-  overflow-x: hidden;
-}
-
-.app-container {
-  width: 100%;
-  max-width: 100%;
-  margin: 0;
-  overflow-x: hidden;
-}
-
-/* Sidebar is ALWAYS a hidden slide-over mobile drawer (never a fixed desktop sidebar) */
-.sidebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  bottom: 58px;
-  width: 280px;
-  max-width: 82vw;
-  background-color: var(--bg-black);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px;
-  z-index: 75;
-  transform: translateX(-105%);
-  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
-  box-shadow: 10px 0 30px rgba(0, 0, 0, 0.85);
-}
-
-.sidebar.mobile-open {
-  transform: translateX(0);
-}
-
-.spotify-box {
-  background-color: var(--bg-main);
-  border-radius: var(--radius-md);
-  padding: 14px;
-}
-
-.library-box {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.brand-icon {
-  width: 32px;
-  height: 32px;
-  background-color: var(--accent);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.brand-name {
-  font-size: 20px;
-  font-weight: 800;
-}
-
-.nav-section {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.nav-link {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.nav-link:hover, .nav-link.active {
-  color: #fff;
-  background-color: var(--bg-tinted);
-}
-
-.song-badge {
-  margin-left: auto;
-  background: var(--bg-tinted);
-  color: #fff;
-  padding: 2px 8px;
-  border-radius: 99px;
-  font-size: 11px;
-}
-
-.playlist-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 10px;
-  color: var(--text-muted);
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.btn-icon-small {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-size: 20px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 50%;
-}
-
-.sidebar-playlists {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.playlist-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 9px 10px;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 13.5px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.playlist-item:hover, .playlist-item.active {
-  color: #fff;
-  background-color: var(--bg-card);
-}
-
-/* --- Main Area (Screenshot 70501.jpg) --- */
 .main-area {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  background-color: var(--bg-main);
+  width: 100%;
+  height: 100%;
   position: relative;
+  overflow: hidden;
+  background-color: var(--bg-main);
+}
+
+/* --- 3 Main Tab Views (Home, Search, Your Library) --- */
+.tab-view {
+  display: none;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
 }
 
+.tab-view.active-view {
+  display: flex;
+}
+
+.view-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 14px 130px 14px;
+}
+
+/* --- Home Top Bar (Screenshot 70792.jpg) --- */
 .top-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 16px 8px 16px;
+  padding: 14px 14px 10px 14px;
   background-color: var(--bg-main);
-  z-index: 10;
 }
 
 .top-avatar {
@@ -2022,8 +1877,8 @@ html, body {
 }
 
 .pill-btn {
-  background-color: #262626;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: #2a2a2a;
+  border: none;
   color: #ffffff;
   padding: 7px 16px;
   border-radius: 999px;
@@ -2036,49 +1891,10 @@ html, body {
 .pill-btn.active {
   background-color: var(--accent);
   color: #000000;
-  border-color: var(--accent);
   font-weight: 700;
 }
 
-/* Search Bar */
-.search-bar-wrap {
-  padding: 4px 16px 8px 16px;
-}
-
-.search-box {
-  display: flex;
-  align-items: center;
-  background-color: #242424;
-  border-radius: 8px;
-  padding: 8px 12px;
-}
-
-.search-box input {
-  background: transparent;
-  border: none;
-  outline: none;
-  color: #fff;
-  font-size: 14px;
-  width: 100%;
-  margin-left: 8px;
-}
-
-.btn-clear-search {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-size: 18px;
-  cursor: pointer;
-}
-
-/* Scrollable Content */
-.content-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 16px 135px 16px;
-}
-
-/* 2-Column 8-Card Grid (Screenshot 70501.jpg) */
+/* --- 2x4 Compact Top Grid (Screenshot 70792.jpg) --- */
 .quick-tiles-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2089,18 +1905,17 @@ html, body {
 
 .quick-tile {
   display: flex;
-  min-width: 0;
   align-items: center;
-  background-color: #262626;
+  min-width: 0;
+  background-color: #282828;
   border-radius: 6px;
   overflow: hidden;
   height: 54px;
   cursor: pointer;
-  transition: background-color 0.2s;
 }
 
-.quick-tile:hover {
-  background-color: #333333;
+.quick-tile:active {
+  background-color: #383838;
 }
 
 .quick-tile img {
@@ -2113,7 +1928,7 @@ html, body {
 .quick-tile-title {
   font-size: 13px;
   font-weight: 700;
-  color: #fff;
+  color: #ffffff;
   padding: 0 10px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -2122,9 +1937,9 @@ html, body {
   line-height: 1.25;
 }
 
-/* Horizontal Carousels ("It's New Music Friday!" & "Jump back in") */
+/* --- "Picked for you" Featured Horizontal Card (Screenshot 70792.jpg) --- */
 .home-section {
-  margin-bottom: 24px;
+  margin-bottom: 26px;
 }
 
 .section-title {
@@ -2132,9 +1947,110 @@ html, body {
   font-weight: 800;
   letter-spacing: -0.4px;
   margin-bottom: 12px;
+  color: #ffffff;
 }
 
-.horiz-scroll-row {
+.picked-card {
+  display: flex;
+  background-color: #242424;
+  border-radius: 8px;
+  overflow: hidden;
+  height: 146px;
+  cursor: pointer;
+}
+
+.picked-card-img {
+  width: 146px;
+  height: 146px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.picked-card-body {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.picked-card-tag {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.picked-card-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #ffffff;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.25;
+  margin-top: 2px;
+}
+
+.picked-card-artist {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 3px;
+}
+
+.picked-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+}
+
+.picked-play-circle {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  color: #000000;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* --- "For fans of Anirudh Ravichander" Header (Screenshots 70792 & 70793) --- */
+.fan-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+
+.fan-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.fan-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.fan-title {
+  font-size: 21px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.4px;
+}
+
+/* --- Horizontal Carousels (Screenshots 70793 & 70794) --- */
+.horiz-scroll-row, .singers-scroll-row, .discover-reels-row {
   display: flex;
   gap: 14px;
   overflow-x: auto;
@@ -2142,103 +2058,22 @@ html, body {
   padding-bottom: 4px;
 }
 
-.horiz-scroll-row::-webkit-scrollbar, .singers-scroll-row::-webkit-scrollbar {
+.horiz-scroll-row::-webkit-scrollbar,
+.singers-scroll-row::-webkit-scrollbar,
+.discover-reels-row::-webkit-scrollbar {
   display: none;
 }
 
-/* Popular Singers Circular Avatar Row */
-.singers-scroll-row {
-  display: flex;
-  gap: 14px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  padding-bottom: 6px;
-}
-
-.singer-circle-card {
-  width: 96px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 7px;
-  cursor: pointer;
-  text-align: center;
-}
-
-.singer-avatar-ring {
-  width: 84px;
-  height: 84px;
-  border-radius: 50%;
-  padding: 2.5px;
-  background: linear-gradient(135deg, var(--accent), #3b82f6);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.55);
-  transition: transform 0.2s ease;
-}
-
-.singer-circle-card:hover .singer-avatar-ring {
-  transform: scale(1.06);
-}
-
-.singer-avatar-ring img {
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  object-fit: cover;
-  background-color: #242424;
-}
-
-.singer-name-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: #ffffff;
-  line-height: 1.2;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* Listen by Mood & Vibe Grid */
-.moods-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.mood-tile {
-  height: 64px;
-  border-radius: 8px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  font-size: 12.5px;
-  font-weight: 800;
-  color: #ffffff;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-  transition: transform 0.18s ease;
-}
-
-.mood-tile:hover {
-  transform: scale(1.03);
-}
-
-.mood-emoji {
-  font-size: 18px;
-}
-
 .horiz-card {
-  width: 152px;
+  width: 154px;
   flex-shrink: 0;
   cursor: pointer;
 }
 
 .horiz-card-img-wrap {
   position: relative;
-  width: 152px;
-  height: 152px;
+  width: 154px;
+  height: 154px;
   border-radius: 6px;
   overflow: hidden;
   margin-bottom: 8px;
@@ -2255,16 +2090,26 @@ html, body {
   position: absolute;
   top: 8px;
   left: 8px;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background-color: var(--accent);
   color: #000;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.horiz-card-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
 }
 
 .horiz-card-sub {
@@ -2277,7 +2122,39 @@ html, body {
   line-height: 1.35;
 }
 
-/* Main Song Cards Grid */
+/* --- Circular Artist Row ("Your favourite artists") --- */
+.singer-circle-card {
+  width: 104px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.singer-avatar-ring {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  overflow: hidden;
+  background-color: #282828;
+}
+
+.singer-avatar-ring img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.singer-name-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+/* --- Clean 2-Column Spotify Song Cards --- */
 .view-header {
   margin-bottom: 12px;
 }
@@ -2294,28 +2171,18 @@ html, body {
 
 .cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   gap: 14px;
+  width: 100%;
 }
 
 .song-card {
   min-width: 0;
   overflow: hidden;
-  background-color: #1a1a1a;
-  border-radius: 8px;
-  padding: 10px;
+  background-color: transparent;
   display: flex;
   flex-direction: column;
   cursor: pointer;
-  transition: var(--transition);
-}
-
-.song-card:hover {
-  background-color: #262626;
-}
-
-.song-card.playing-now {
-  border: 1px solid var(--accent);
 }
 
 .card-img-wrapper {
@@ -2325,6 +2192,7 @@ html, body {
   border-radius: 6px;
   overflow: hidden;
   margin-bottom: 8px;
+  background-color: #242424;
 }
 
 .card-img-wrapper img {
@@ -2355,27 +2223,32 @@ html, body {
 }
 
 .card-title {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
+  color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.song-card.playing-now .card-title {
+  color: var(--accent);
+}
+
 .card-artist {
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-top: 2px;
 }
 
 .card-actions {
   display: flex;
   justify-content: space-between;
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid rgba(255,255,255,0.06);
+  margin-top: 6px;
+  padding-top: 4px;
 }
 
 .card-actions button {
@@ -2391,27 +2264,243 @@ html, body {
   color: var(--accent);
 }
 
-/* --- Floating Mini-Player Bar (Screenshot 70501.jpg) --- */
+/* =====================================================================
+   TAB 2: SEARCH VIEW STYLES (Matches Screenshots 70795, 70796, 70797)
+   ===================================================================== */
+.tab-top-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 14px 10px 14px;
+}
+
+.tab-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tab-big-title {
+  font-size: 24px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.5px;
+}
+
+.spotify-white-search-wrap {
+  padding: 4px 14px 12px 14px;
+}
+
+.spotify-white-search {
+  display: flex;
+  align-items: center;
+  background-color: #ffffff;
+  border-radius: 6px;
+  height: 46px;
+  padding: 0 14px;
+}
+
+.spotify-white-search input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #121212;
+  font-size: 15px;
+  font-weight: 600;
+  width: 100%;
+  margin-left: 10px;
+}
+
+.spotify-white-search input::placeholder {
+  color: #555555;
+  font-weight: 600;
+}
+
+.btn-clear-white-search {
+  background: transparent;
+  border: none;
+  color: #333;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+/* 2-Column Colorful Spotify Browse Tiles with Rotated Corner Image */
+.browse-tiles-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.browse-tile {
+  position: relative;
+  height: 96px;
+  border-radius: 6px;
+  padding: 12px;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.browse-tile-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #ffffff;
+  max-width: 62%;
+  line-height: 1.22;
+  position: relative;
+  z-index: 2;
+}
+
+.browse-tile-img {
+  position: absolute;
+  right: -12px;
+  bottom: -6px;
+  width: 68px;
+  height: 68px;
+  border-radius: 4px;
+  object-fit: cover;
+  transform: rotate(25deg);
+  box-shadow: -2px 4px 10px rgba(0, 0, 0, 0.45);
+  z-index: 1;
+}
+
+/* "Discover something new" Vertical Cards (Screenshot 70795.jpg) */
+.discover-reel-card {
+  position: relative;
+  width: 138px;
+  height: 210px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  cursor: pointer;
+  background-color: #242424;
+}
+
+.discover-reel-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.discover-reel-tag {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 55%, rgba(0,0,0,0.88) 100%);
+  display: flex;
+  align-items: flex-end;
+  padding: 12px 10px;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+/* =====================================================================
+   TAB 3: YOUR LIBRARY VIEW STYLES (Matches Screenshot 70798.jpg)
+   ===================================================================== */
+.lib-pills-row {
+  display: flex;
+  gap: 8px;
+  padding: 2px 14px 12px 14px;
+}
+
+.lib-pill {
+  background-color: #2a2a2a;
+  border: none;
+  color: #ffffff;
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lib-pill.active {
+  background-color: var(--accent);
+  color: #000000;
+  font-weight: 700;
+}
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.lib-row-art, .lib-liked-box {
+  width: 64px;
+  height: 64px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.lib-row-art.artist-round {
+  border-radius: 50%;
+}
+
+.lib-liked-box {
+  background: linear-gradient(135deg, #450af5 0%, #8e8ee5 55%, #c4efd9 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 26px;
+}
+
+.lib-row-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.lib-row-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lib-row-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.pin-green {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+/* =====================================================================
+   CRIMSON FLOATING MINI-PLAYER BAR (Matches Screenshots 70792 - 70798)
+   ===================================================================== */
 .mini-player {
   position: fixed;
   left: 8px;
   right: 8px;
-  bottom: 62px;
-  background-color: #1f2429;
-  border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.75);
+  bottom: 58px;
+  background-color: #590d12;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
   z-index: 35;
   overflow: hidden;
   cursor: pointer;
   touch-action: pan-y;
-}
-
-.mini-banner-hint {
-  display: none;
-  font-size: 11.5px;
-  color: #d1d5db;
-  padding: 7px 12px 4px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .mini-player-main {
@@ -2419,59 +2508,44 @@ html, body {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
+  height: 54px;
 }
 
 .mini-thumb {
-  width: 42px;
-  height: 42px;
-  border-radius: 6px;
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
   object-fit: cover;
   flex-shrink: 0;
 }
 
 .mini-info {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
 .mini-title {
   font-size: 13.5px;
   font-weight: 700;
-  color: #fff;
+  color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .mini-artist-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.76);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.sparkle-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background-color: var(--accent);
-  color: #000;
-  font-size: 9px;
-  font-weight: 900;
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
 .mini-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .mini-icon-btn, .mini-play-btn {
@@ -2490,8 +2564,8 @@ html, body {
 }
 
 .mini-progress-track {
-  height: 2.5px;
-  background-color: rgba(255, 255, 255, 0.2);
+  height: 2px;
+  background-color: rgba(255, 255, 255, 0.22);
   width: 100%;
 }
 
@@ -2502,14 +2576,14 @@ html, body {
   transition: width 0.15s linear;
 }
 
-/* --- Bottom 5-Tab Navigation Bar (Screenshot 70501.jpg) --- */
+/* --- Bottom 5-Tab Navigation Bar --- */
 .mobile-bottom-nav {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 58px;
-  background: linear-gradient(180deg, rgba(0,0,0,0.88) 0%, #000000 100%);
+  height: 56px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.92) 0%, #000000 100%);
   display: flex;
   justify-content: space-around;
   align-items: center;
@@ -2523,7 +2597,7 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   font-size: 10.5px;
   font-weight: 600;
   cursor: pointer;
@@ -2534,7 +2608,7 @@ html, body {
 }
 
 /* =====================================================================
-   FULL-SCREEN SPOTIFY VIDEO CANVAS & LYRICS SHEET (Screenshots 2-5)
+   FULL-SCREEN VIDEO CANVAS & VOICE-SYNCED LYRICS SHEET
    ===================================================================== */
 .np-sheet {
   position: fixed;
@@ -2543,7 +2617,7 @@ html, body {
   z-index: 80;
   overflow-y: auto;
   transform: translateY(100%);
-  transition: transform 0.32s cubic-bezier(0.2, 0.9, 0.3, 1);
+  transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 
 .np-sheet.open {
@@ -2579,13 +2653,7 @@ html, body {
   height: 100%;
   object-fit: cover;
   filter: brightness(0.65) contrast(1.08);
-  animation: kenBurnsZoom 18s ease-in-out infinite alternate;
   z-index: 0;
-}
-
-@keyframes kenBurnsZoom {
-  0% { transform: scale(1) translate(0, 0); }
-  100% { transform: scale(1.04) translate(0, 0); }
 }
 
 .np-video-gradient {
@@ -2607,7 +2675,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 18px 10px 18px;
+  padding: 16px 16px 8px 16px;
 }
 
 .np-top-center {
@@ -2635,20 +2703,6 @@ html, body {
   gap: 4px;
 }
 
-.np-swipe-indicator {
-  position: relative;
-  z-index: 5;
-  align-self: center;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(8px);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 5px 14px;
-  border-radius: 999px;
-  pointer-events: none;
-}
-
 .np-stage-bottom {
   position: relative;
   z-index: 5;
@@ -2659,13 +2713,12 @@ html, body {
   width: 100%;
 }
 
-/* Floating Lyric Line on Video (Screenshot 70502.jpg) */
 .np-floating-lyric {
-  font-size: 15px;
+  font-size: 15.5px;
   font-weight: 800;
   color: #ffffff;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
-  min-height: 20px;
+  min-height: 22px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -2683,7 +2736,6 @@ html, body {
   height: 44px;
   border-radius: 6px;
   object-fit: cover;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
   flex-shrink: 0;
 }
 
@@ -2706,11 +2758,25 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
+  font-size: 13.5px;
   color: rgba(255, 255, 255, 0.78);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.sparkle-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--accent);
+  color: #000;
+  font-size: 9px;
+  font-weight: 900;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 
 .np-circle-action {
@@ -2728,11 +2794,10 @@ html, body {
   color: var(--accent);
 }
 
-/* Scrubber */
 .np-scrubber-wrap {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .np-range-slider {
@@ -2763,12 +2828,10 @@ html, body {
   color: rgba(255, 255, 255, 0.75);
 }
 
-/* Transport Controls Row (Screenshot 70502.jpg & 70505.jpg) */
 .np-controls-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 0;
 }
 
 .np-ctrl-btn {
@@ -2776,9 +2839,6 @@ html, body {
   border: none;
   color: #ffffff;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .np-ctrl-btn.active {
@@ -2786,8 +2846,8 @@ html, body {
 }
 
 .np-big-play-btn {
-  width: 64px;
-  height: 64px;
+  width: 62px;
+  height: 62px;
   border-radius: 50%;
   background-color: #ffffff;
   color: #000000;
@@ -2796,34 +2856,29 @@ html, body {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 .np-sub-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-top: 4px;
 }
 
-/* --- Below-the-Fold Cards inside Now Playing Sheet (Screenshots 3 & 4) --- */
+/* Below-the-fold Lyrics & Artist Cards */
 .np-below-fold {
-  max-width: 560px;
-  margin: 0 auto;
-  padding: 8px 16px 60px 16px;
+  padding: 8px 14px 60px 14px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-/* Lyrics Preview Card (Screenshot 70503.jpg) */
 .np-lyrics-card {
   background: linear-gradient(165deg, #353f4e 0%, #272f3b 100%);
   border-radius: 16px;
   padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .np-card-header {
@@ -2840,8 +2895,6 @@ html, body {
   max-height: 250px;
   overflow-y: auto;
   scroll-behavior: smooth;
-  padding: 8px 4px;
-  transition: max-height 0.35s ease;
   scrollbar-width: none;
 }
 
@@ -2857,9 +2910,8 @@ html, body {
   padding: 7px 6px;
   border-radius: 8px;
   color: rgba(255, 255, 255, 0.34);
-  transition: color 0.22s ease, transform 0.22s ease, text-shadow 0.22s ease;
+  transition: color 0.22s ease, transform 0.22s ease;
   cursor: pointer;
-  transform-origin: left center;
 }
 
 .lyric-line.past {
@@ -2869,7 +2921,6 @@ html, body {
 .lyric-line.active {
   color: #ffffff;
   transform: scale(1.03);
-  text-shadow: 0 2px 14px rgba(255, 255, 255, 0.45);
   background: rgba(255, 255, 255, 0.07);
 }
 
@@ -2885,7 +2936,6 @@ html, body {
   cursor: pointer;
 }
 
-/* About the Artist Card (Screenshots 70503.jpg & 70504.jpg) */
 .np-info-card {
   background-color: #1f1f1f;
   border-radius: 16px;
@@ -2899,7 +2949,7 @@ html, body {
 .np-artist-banner-wrap {
   position: relative;
   width: 100%;
-  height: 220px;
+  height: 210px;
 }
 
 .np-artist-banner {
@@ -2926,7 +2976,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .np-artist-name-verified {
@@ -2953,7 +3003,6 @@ html, body {
 .np-monthly-listeners {
   font-size: 13px;
   color: var(--text-muted);
-  margin-top: 2px;
 }
 
 .np-follow-btn {
@@ -2973,7 +3022,6 @@ html, body {
   line-height: 1.5;
 }
 
-/* Explore Artist 3-Column Row (Screenshot 70504.jpg) */
 .np-section-heading {
   font-size: 16px;
   font-weight: 800;
@@ -2988,7 +3036,7 @@ html, body {
 
 .np-explore-card {
   position: relative;
-  height: 165px;
+  height: 160px;
   border-radius: 10px;
   overflow: hidden;
   cursor: pointer;
@@ -3010,14 +3058,12 @@ html, body {
   font-size: 12px;
   font-weight: 800;
   color: #ffffff;
-  line-height: 1.25;
 }
 
-/* Credits Card (Screenshot 70504.jpg) */
 .np-credits-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .np-credit-row {
@@ -3029,16 +3075,14 @@ html, body {
 .np-credit-name {
   font-size: 15px;
   font-weight: 700;
-  color: #ffffff;
 }
 
 .np-credit-role {
   font-size: 12.5px;
   color: var(--text-muted);
-  margin-top: 2px;
 }
 
-/* Queue Drawer, Modals & Responsive Rules */
+/* Queue Drawer, Track Table & Modals */
 .queue-panel {
   position: fixed;
   top: 0;
@@ -3052,7 +3096,6 @@ html, body {
   flex-direction: column;
   transform: translateX(100%);
   transition: transform 0.28s ease;
-  box-shadow: -8px 0 28px rgba(0,0,0,0.75);
 }
 
 .queue-panel.open {
@@ -3124,39 +3167,6 @@ html, body {
   border-radius: 99px;
 }
 
-.user-profile-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background-color: var(--bg-tinted);
-  padding: 8px 10px;
-  border-radius: 6px;
-  margin-bottom: 10px;
-  cursor: pointer;
-}
-
-.user-avatar {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background-color: #b86b43;
-  color: #fff;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.user-name-display {
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.user-age-display {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
 .btn-primary {
   background-color: var(--accent);
   color: #000;
@@ -3187,13 +3197,21 @@ html, body {
   cursor: pointer;
 }
 
+.btn-icon-small {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  cursor: pointer;
+}
+
 .track-table {
   width: 100%;
   border-collapse: collapse;
 }
 
 .track-table th, .track-table td {
-  padding: 10px 8px;
+  padding: 10px 6px;
   text-align: left;
   font-size: 13.5px;
 }
@@ -3206,8 +3224,8 @@ html, body {
 }
 
 .track-title-cell img {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   border-radius: 4px;
   object-fit: cover;
 }
@@ -3285,7 +3303,7 @@ html, body {
 
 .toast-container {
   position: fixed;
-  bottom: 125px;
+  bottom: 120px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 130;
@@ -3303,32 +3321,6 @@ html, body {
   border-radius: 999px;
   font-size: 13px;
   box-shadow: 0 6px 20px rgba(0,0,0,0.6);
-}
-
-/* Full-width edge-to-edge mini-player, bottom nav, and 2-column equal grid */
-.mini-player {
-  width: auto;
-  max-width: none;
-  left: 8px;
-  right: 8px;
-}
-
-.mobile-bottom-nav {
-  width: 100%;
-  max-width: none;
-  left: 0;
-  right: 0;
-}
-
-.cards-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-  gap: 12px;
-  width: 100%;
-}
-
-.np-stage-bottom, .np-below-fold {
-  max-width: 100%;
 }
 '''
 
@@ -4198,7 +4190,10 @@ PLAYER_JS = r'''/* =============================================================
 })();
 '''
 
-APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
+APP_JS = r'''/* ==========================================================================
+   Musify 1:1 Spotify Mobile Controller (Home, Search, Your Library)
+   Matches Screenshots 70792 - 70798
+   ========================================================================== */
 (function () {
   const $ = (id) => document.getElementById(id);
   const esc = window.esc;
@@ -4211,73 +4206,132 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
   let searchTimer = null;
   let currentPage = 1;
   let activeSearchQuery = "";
+  let currentLibFilter = "all";
+
+  // 1. Exact 8 Top Quick-Play Cards from Screenshot 70792.jpg
+  const QUICK_8_CARDS = [
+    { title: "Maestro", query: "Sirivennela Shyam Singha Roy Mickey J Meyer", img: "https://c.saavncdn.com/693/Shyam-Singha-Roy-Telugu-2021-20211222151513-500x500.jpg" },
+    { title: "High beam", query: "Telugu Mass Hits Thaman DSP Anirudh", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
+    { title: "Aarya - 2 (Original Motion...)", query: "Arya 2 Devi Sri Prasad Allu Arjun", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" },
+    { title: "OG Telugu Full Album", query: "Hungry Cheetah OG Thaman Pawan Kalyan", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
+    { title: "Radhimaa (From \"Think Indie\")", query: "Sai Abhyankkar Katchi Sera Aasa Kooda", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" },
+    { title: "Ballari baava 🔥", query: "Pushpa 2 Devara Telugu Mass Songs", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
+    { title: "Feel good Love Songs in Telugu", query: "Hi Nanna Sita Ramam Geetha Govindam Sid Sriram", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg" },
+    { title: "Karuppu (Original Motion...)", query: "Alaakaa Loova Senjudare Veezha Veera Sai Abhyankkar", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" }
+  ];
+
+  // 2. Search Tab Colorful Browse Tiles (Screenshots 70795, 70796, 70797)
+  const SEARCH_TOP_TILES = [
+    { title: "Music", color: "#e1118c", cat: "telugu", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
+    { title: "Podcasts", color: "#006450", cat: "trending", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg" },
+    { title: "Live Events", color: "#8400e7", cat: "mass", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
+    { title: "Home of I-Pop", color: "#1e3264", cat: "hindi", img: "https://c.saavncdn.com/807/Kabir-Singh-Hindi-2019-20240131131003-500x500.jpg" },
+    { title: "Made For You", color: "#8d67ab", cat: "love", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" }
+  ];
+
+  const SEARCH_BROWSE_ALL = [
+    { title: "Upcoming releases", color: "#006450", query: "Alaakaa Loova Senjudare Veezha Veera", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
+    { title: "New Releases", color: "#608108", cat: "telugu", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
+    { title: "Telugu", color: "#e8115b", cat: "telugu", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
+    { title: "Hindi", color: "#e1118c", cat: "hindi", img: "https://c.saavncdn.com/807/Kabir-Singh-Hindi-2019-20240131131003-500x500.jpg" },
+    { title: "Tamil", color: "#ba5d07", query: "Anirudh Ravichander Tamil Hits Jailer Vikram Leo", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" },
+    { title: "English • Weeknd & Ed", color: "#1e3264", cat: "english", img: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=300&auto=format&fit=crop&q=80" },
+    { title: "Punjabi", color: "#b02897", cat: "punjabi", img: "https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=300&auto=format&fit=crop&q=80" },
+    { title: "OM • Dhanush", color: "#b85d19", cat: "om", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" },
+    { title: "Charts", color: "#8d67ab", cat: "trending", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg" },
+    { title: "Malayalam", color: "#477d95", query: "Malayalam Top Hits Aavesham Premalu Manjummel Boys", img: "https://c.saavncdn.com/693/Shyam-Singha-Roy-Telugu-2021-20211222151513-500x500.jpg" },
+    { title: "Summer & Chill", color: "#148a08", cat: "chill", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg" },
+    { title: "Discover Weekly", color: "#8d67ab", cat: "melodies", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" },
+    { title: "Radio", color: "#e1118c", cat: "evergreen", img: "https://c.saavncdn.com/693/Shyam-Singha-Roy-Telugu-2021-20211222151513-500x500.jpg" },
+    { title: "Fresh Finds", color: "#ff0090", cat: "love", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" },
+    { title: "Pop", color: "#477d95", cat: "english", img: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&auto=format&fit=crop&q=80" },
+    { title: "Workout & Gym", color: "#e13300", cat: "workout", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
+    { title: "Heartbreak & Sad", color: "#777777", cat: "sad", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" },
+    { title: "Indie", color: "#e91429", cat: "drive", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" }
+  ];
+
+  // 3. Curated Library Items Matching Screenshot 70798.jpg
+  const CURATED_LIBRARY_ITEMS = [
+    { type: "playlists", title: "High beam", sub: "Playlist • Musify", query: "Telugu Mass Hits Pushpa 2 Devara Guntur Kaaram", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
+    { type: "albums", title: "Daaku Maharaaj", sub: "EP • Thaman S", query: "Daaku Maharaaj Thaman Balakrishna Telugu", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
+    { type: "albums", title: "Raktacharitra", sub: "Compilation • Various Artists", query: "Raktacharitra Telugu Songs", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" },
+    { type: "playlists", title: "Jailer 2 - All Songs [Telugu] ✨🔥", sub: "Playlist • Anirudh ✨🎧", query: "Jailer Telugu Anirudh Hukum Kaavaalaa", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
+    { type: "albums", title: "Jailer 2 (Original Motion Picture Soundtrack)", sub: "Album • Anirudh Ravichander", query: "Anirudh Ravichander Jailer Vikram Leo Devara", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" },
+    { type: "albums", title: "Veezha Veera (From \"OM Chapter 1: Udhiram\")", sub: "Single • Sai Abhyankkar", query: "Alaakaa Loova Senjudare Veezha Veera Sai Abhyankkar", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" },
+    { type: "albums", title: "Devara Part 1 (Original Motion Picture Soundtrack)", sub: "Album • Anirudh Ravichander", query: "Devara Telugu Chuttamalle Fear Song Daavudi", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
+    { type: "albums", title: "Pushpa 2: The Rule [Telugu]", sub: "Album • Devi Sri Prasad", query: "Pushpa 2 Telugu Pushpa Pushpa Sooseki Kissik", img: "https://c.saavncdn.com/693/Shyam-Singha-Roy-Telugu-2021-20211222151513-500x500.jpg" },
+    { type: "artists", title: "Sid Sriram", sub: "Artist • Telugu & Tamil Melodies", query: "Sid Sriram Telugu", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg", round: true },
+    { type: "artists", title: "Anirudh Ravichander", sub: "Artist • Composer & Vocalist", query: "Anirudh Ravichander", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg", round: true },
+    { type: "artists", title: "The Weeknd", sub: "Artist • Global Pop", query: "The Weeknd", img: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=300&auto=format&fit=crop&q=80", round: true },
+    { type: "artists", title: "Ed Sheeran", sub: "Artist • Global Pop", query: "Ed Sheeran", img: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&auto=format&fit=crop&q=80", round: true },
+    { type: "artists", title: "Arijit Singh", sub: "Artist • Bollywood Hits", query: "Arijit Singh", img: "https://c.saavncdn.com/807/Kabir-Singh-Hindi-2019-20240131131003-500x500.jpg", round: true }
+  ];
+
+  const ALL_SINGERS = [
+    { name: "Sid Sriram", query: "Sid Sriram Telugu" },
+    { name: "Anirudh", query: "Anirudh Ravichander" },
+    { name: "Devi Sri Prasad", query: "Devi Sri Prasad Telugu" },
+    { name: "Thaman S", query: "Thaman S Telugu" },
+    { name: "Arijit Singh", query: "Arijit Singh" },
+    { name: "The Weeknd", query: "The Weeknd" },
+    { name: "Ed Sheeran", query: "Ed Sheeran" },
+    { name: "Dhanush", query: "Dhanush" },
+    { name: "Sai Abhyankkar", query: "Sai Abhyankkar" },
+    { name: "S. P. Balasubrahmanyam", query: "SP Balasubrahmanyam Telugu" },
+    { name: "Mickey J. Meyer", query: "Mickey J Meyer" },
+    { name: "A. R. Rahman", query: "AR Rahman Telugu" },
+    { name: "Hesham Abdul Wahab", query: "Hesham Abdul Wahab" },
+    { name: "Shreya Ghoshal", query: "Shreya Ghoshal Telugu" },
+    { name: "Anurag Kulkarni", query: "Anurag Kulkarni" }
+  ];
 
   const TITLES = {
-    home: ["All Popular & Trending Songs", "Full-length Telugu, Ed Sheeran, The Weeknd & Hindi hits • Auto-loads as you scroll"],
-    telugu: ["New & Trending Telugu Blockbusters", "Pushpa 2, Devara, OM Chapter 1, Kalki, Guntur Kaaram, Sid Sriram & Thaman"],
-    om: ["OM Chapter 1: Udhiram • Dhanush", "Alaakaa Loova, Veera Veera, Veezha Veera, Senjudare & Dhanush hits"],
-    english: ["Ed Sheeran, The Weeknd & English Hits", "Blinding Lights, Shape of You, Starboy, Perfect, Die For You & global pop"],
-    hindi: ["New & Trending Hindi Blockbusters", "Arijit Singh, Stree 2, Bhool Bhulaiyaa 3, Animal, Jawan & Bollywood hits"],
-    love: ["💕 Romantic & Love Melodies", "Heart-touching Telugu, Hindi & English love songs"],
-    sad: ["💔 Heartbreak & Love Failure Songs", "Soulful emotional tracks for late-night listening"],
-    mass: ["🔥 High-Voltage Mass & Kuthu Beats", "Theatre mass anthems from DSP, Thaman & Anirudh"],
-    chill: ["😌 Feel Good & Chill Vibes", "Relaxing melodies, acoustic & lo-fi tracks"],
-    workout: ["💪 Gym & Workout Beast Mode", "High-energy motivation & adrenaline tracks"],
-    drive: ["🚗 Late Night Drive Melodies", "Breezy road-trip songs across Telugu, Hindi & English"],
-    party: ["🎉 Party & DJ Dance Floor", "Non-stop Telugu, Bollywood, Punjabi & Pop club hits"],
-    evergreen: ["🌟 90s & 2000s Evergreen Classics", "SPB, Chitra, Mani Sharma, Ilaiyaraaja, AR Rahman & KK classics"],
-    devotional: ["🙏 Devotional & Peaceful", "Spiritual & peaceful morning songs"],
-    melodies: ["Feel Good Telugu Melodies", "Sirivennela, Maestro, Geetha Govindam & love hits"],
-    trending: ["Top Viral & Trending Songs", "Telugu, English & Hindi chartbusters"],
+    home: ["Recommended for today", "Full-length Telugu, English & Hindi streams • Plays back-to-back"],
+    telugu: ["New & Trending Telugu Hits", "Devara, Pushpa 2, Guntur Kaaram, Hi Nanna, Sid Sriram & Thaman"],
+    om: ["OM Chapter 1: Udhiram • Dhanush", "Alaakaa Loova, Senjudare, Veezha Veera, Sai Abhyankkar & Dhanush"],
+    english: ["Ed Sheeran, The Weeknd & English Hits", "Blinding Lights, Shape of You, Starboy, Perfect & global pop"],
+    hindi: ["Bollywood Top 50", "Arijit Singh, Stree 2, Animal, Jawan & Hindi chartbusters"],
+    love: ["Romantic & Love Melodies", "Feel-good Telugu, Hindi & English love songs"],
+    sad: ["Heartbreak & Sad Songs", "Orange, Arya 2, 3, Arijit Singh & Sid Sriram"],
+    mass: ["Mass & Dance Beats", "Kurchi Madathapetti, Daavudi, Pushpa Pushpa & Boss Party"],
+    chill: ["Chill & Feel Good", "Sirivennela, Maestro, Sammohanam & acoustic vibes"],
+    workout: ["Gym & Workout Motivation", "High-energy Salaar, Vikram, Jailer, Animal & Weeknd"],
+    drive: ["Late Night Drive", "Ye Maaya Chesave, Awara, Gharshana & Blinding Lights"],
+    party: ["Party & DJ Hits", "Non-stop dance floor & club anthems"],
+    evergreen: ["90s & 2000s Evergreen", "SPB, Chithra, Mani Sharma & classic hits"],
+    devotional: ["Devotional & Peaceful", "Annamayya, Hanuman Chalisa & Namo Namo"],
+    melodies: ["Feel Good Telugu Melodies", "Sirivennela, Maestro, Hi Nanna & Sita Ramam"],
+    trending: ["Trending Chartbusters", "Most streamed Telugu, English & Hindi tracks"],
     punjabi: ["Punjabi Party Anthems", "AP Dhillon, Diljit Dosanjh & Karan Aujla"]
   };
 
-  const ALL_SINGERS = [
-    { name: "Sid Sriram", query: "Sid Sriram Telugu Hits", img: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80" },
-    { name: "Anirudh", query: "Anirudh Ravichander Telugu Tamil Hits", img: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=200&auto=format&fit=crop&q=80" },
-    { name: "Devi Sri Prasad", query: "Devi Sri Prasad Telugu Hits Pushpa Arya", img: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=200&auto=format&fit=crop&q=80" },
-    { name: "Thaman S", query: "Thaman S Telugu Hits Ala Vaikunthapurramuloo Guntur Kaaram", img: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=200&auto=format&fit=crop&q=80" },
-    { name: "Arijit Singh", query: "Arijit Singh All Hit Songs", img: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=200&auto=format&fit=crop&q=80" },
-    { name: "The Weeknd", query: "The Weeknd", img: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=200&auto=format&fit=crop&q=80" },
-    { name: "Ed Sheeran", query: "Ed Sheeran", img: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=200&auto=format&fit=crop&q=80" },
-    { name: "Dhanush", query: "Dhanush", img: "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=200&auto=format&fit=crop&q=80" },
-    { name: "Sai Abhyankkar", query: "Sai Abhyankkar OM Chapter 1 Katchi Sera Aasa Kooda", img: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=200&auto=format&fit=crop&q=80" },
-    { name: "S. P. Balasubrahmanyam", query: "SP Balasubrahmanyam Telugu Hits", img: "https://images.unsplash.com/photo-1465847899084-d164df4dedc6?w=200&auto=format&fit=crop&q=80" },
-    { name: "Mickey J. Meyer", query: "Mickey J Meyer Telugu Songs", img: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=200&auto=format&fit=crop&q=80" },
-    { name: "A. R. Rahman", query: "AR Rahman Telugu Tamil Hindi Hits", img: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80" },
-    { name: "Hesham Abdul Wahab", query: "Hesham Abdul Wahab Hi Nanna Kushi Telugu Songs", img: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=200&auto=format&fit=crop&q=80" },
-    { name: "Shreya Ghoshal", query: "Shreya Ghoshal Telugu Hindi Hits", img: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=200&auto=format&fit=crop&q=80" },
-    { name: "Anurag Kulkarni", query: "Anurag Kulkarni Telugu Hit Songs", img: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=200&auto=format&fit=crop&q=80" },
-    { name: "Ram Miriyala", query: "Ram Miriyala Telugu Songs", img: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=200&auto=format&fit=crop&q=80" },
-    { name: "K. S. Chithra", query: "KS Chithra Telugu Melody Songs", img: "https://images.unsplash.com/photo-1465847899084-d164df4dedc6?w=200&auto=format&fit=crop&q=80" },
-    { name: "Ilaiyaraaja", query: "Ilaiyaraaja Telugu Evergreen Songs", img: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=200&auto=format&fit=crop&q=80" },
-    { name: "M. M. Keeravani", query: "MM Keeravani RRR Baahubali Telugu Songs", img: "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=200&auto=format&fit=crop&q=80" },
-    { name: "Mani Sharma", query: "Mani Sharma Telugu Hit Songs", img: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=200&auto=format&fit=crop&q=80" },
-    { name: "Karthik", query: "Singer Karthik Telugu Hit Songs", img: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=200&auto=format&fit=crop&q=80" },
-    { name: "Chinmayi", query: "Chinmayi Sripada Telugu Songs", img: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=200&auto=format&fit=crop&q=80" },
-    { name: "Pritam", query: "Pritam Bollywood Hit Songs", img: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=200&auto=format&fit=crop&q=80" },
-    { name: "Atif Aslam", query: "Atif Aslam Hit Songs", img: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=200&auto=format&fit=crop&q=80" },
-    { name: "KK", query: "KK Singer Best Hindi Telugu Songs", img: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80" },
-    { name: "Taylor Swift", query: "Taylor Swift Cruel Summer Lover Blank Space", img: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=200&auto=format&fit=crop&q=80" },
-    { name: "Dua Lipa", query: "Dua Lipa Levitating Houdini Don't Start Now", img: "https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=200&auto=format&fit=crop&q=80" },
-    { name: "Alan Walker", query: "Alan Walker Faded Alone On My Way", img: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=200&auto=format&fit=crop&q=80" },
-    { name: "Justin Bieber", query: "Justin Bieber Stay Peaches Baby Sorry", img: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=200&auto=format&fit=crop&q=80" },
-    { name: "Coldplay", query: "Coldplay Hymn For The Weekend Yellow Sky Full Of Stars", img: "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=200&auto=format&fit=crop&q=80" },
-    { name: "AP Dhillon", query: "AP Dhillon Excuses Brown Munde With You", img: "https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=200&auto=format&fit=crop&q=80" },
-    { name: "Diljit Dosanjh", query: "Diljit Dosanjh Lover Born To Shine Kinni Kinni", img: "https://images.unsplash.com/photo-1445985543470-41fdd6ce388d?w=200&auto=format&fit=crop&q=80" }
-  ];
+  // ---- Tab Switching (Home / Search / Your Library) ----
+  window.switchTab = function (tabName) {
+    window.closeNowPlayingSheet();
+    ["home", "search", "library"].forEach((t) => {
+      const viewEl = $(t + "View");
+      if (viewEl) viewEl.classList.toggle("active-view", t === tabName);
+    });
+    if ($("tabHome")) $("tabHome").classList.toggle("active", tabName === "home");
+    if ($("tabSearch")) $("tabSearch").classList.toggle("active", tabName === "search");
+    if ($("tabLibrary")) $("tabLibrary").classList.toggle("active", tabName === "library");
 
-  const ALL_MOODS = [
-    { cat: "love", emoji: "💕", label: "Love & Romantic", bg: "linear-gradient(135deg, #e11d48, #881337)" },
-    { cat: "sad", emoji: "💔", label: "Heartbreak & Sad", bg: "linear-gradient(135deg, #3b82f6, #1e3a8a)" },
-    { cat: "mass", emoji: "🔥", label: "Mass & Dance", bg: "linear-gradient(135deg, #ea580c, #7c2d12)" },
-    { cat: "chill", emoji: "😌", label: "Chill & Feel Good", bg: "linear-gradient(135deg, #0d9488, #115e59)" },
-    { cat: "workout", emoji: "💪", label: "Gym & Workout", bg: "linear-gradient(135deg, #dc2626, #450a0a)" },
-    { cat: "drive", emoji: "🚗", label: "Night Drive", bg: "linear-gradient(135deg, #7c3aed, #3b0764)" },
-    { cat: "party", emoji: "🎉", label: "Party & DJ Club", bg: "linear-gradient(135deg, #db2777, #500724)" },
-    { cat: "evergreen", emoji: "🌟", label: "90s/2000s Classics", bg: "linear-gradient(135deg, #d97706, #451a03)" },
-    { cat: "devotional", emoji: "🙏", label: "Devotional", bg: "linear-gradient(135deg, #059669, #064e3b)" }
-  ];
+    if (tabName === "library") {
+      renderLibraryView();
+    } else if (tabName === "search") {
+      initSearchBrowseTiles();
+    }
+  };
+
+  window.openCategoryOrQuery = function (queryOrCat, headingLabel) {
+    window.switchTab("home");
+    $("homeHeroSections").style.display = "none";
+    setHeading(headingLabel || queryOrCat, "Full-length tracks • Tap any song to play");
+    showLoading("Loading songs...");
+    api("/api/search?q=" + encodeURIComponent(queryOrCat) + "&page=1")
+      .then((data) => renderSongs(data.songs || [], false, false))
+      .catch(() => {});
+  };
 
   function getLikedSongs() {
     try { return JSON.parse(localStorage.getItem("musify_liked_songs") || "[]"); }
@@ -4287,7 +4341,6 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
   function saveLikedSongs(list) {
     try { localStorage.setItem("musify_liked_songs", JSON.stringify(list)); }
     catch (e) {}
-    if ($("likedCountBadge")) $("likedCountBadge").textContent = list.length;
   }
 
   function isSongLiked(song) {
@@ -4328,7 +4381,7 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
   };
 
   window.openLikedSongs = function () {
-    closeMobileMenu();
+    window.switchTab("home");
     openPlaylistId = "liked";
     $("homeHeroSections").style.display = "none";
     const liked = getLikedSongs();
@@ -4358,175 +4411,6 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     $("content").innerHTML = '<div style="color:var(--text-muted);padding:30px 0;">' + esc(text || "Loading...") + "</div>";
   }
 
-  function closeMobileMenu() {
-    $("sidebar").classList.remove("mobile-open");
-  }
-
-  window.toggleMobileSidebar = function () {
-    $("sidebar").classList.toggle("mobile-open");
-  };
-
-  window.openSearchView = function () {
-    closeMobileMenu();
-    $("query").focus();
-  };
-
-  window.clearSearchInput = function () {
-    $("query").value = "";
-    loadCategory(currentCategory);
-  };
-
-  window.triggerArtistSearch = function (q) {
-    $("query").value = q;
-    runSearch(q);
-  };
-
-  // ---- Populate 2x4 Top Grid + Telugu, English (Weeknd/Ed Sheeran) & Hindi Carousels ----
-  function renderHomeHeroSections(songs) {
-    if (!songs || !songs.length) return;
-    const top8 = songs.slice(0, 8);
-    if ($("quickTilesGrid")) {
-      $("quickTilesGrid").innerHTML = top8.map((s, i) => `
-        <div class="quick-tile" data-hero-i="${i}">
-          <img src="${esc(s.image_url)}" alt="" loading="lazy">
-          <div class="quick-tile-title">${esc(s.title)}</div>
-        </div>`).join("");
-    }
-
-    if ($("singersRow")) {
-      $("singersRow").innerHTML = ALL_SINGERS.map((sg, sIdx) => {
-        // Match real artwork from loaded songs if artist appears, otherwise use vibrant gradient monogram avatar
-        const matchedSong = songs.find((x) => (x.artist || "").toLowerCase().includes(sg.name.toLowerCase().split(" ")[0]));
-        const artUrl = matchedSong ? matchedSong.image_url : "";
-        const initials = sg.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
-        const hues = ["#1db954", "#e11d48", "#3b82f6", "#ea580c", "#8b5cf6", "#0d9488", "#d97706", "#db2777"];
-        const bgCol = hues[sIdx % hues.length];
-        return `
-        <div class="singer-circle-card" data-singer-q="${esc(sg.name)}" data-singer-name="${esc(sg.name)}">
-          <div class="singer-avatar-ring" style="background:${bgCol};display:flex;align-items:center;justify-content:center;overflow:hidden;">
-            ${artUrl
-              ? `<img src="${esc(artUrl)}" alt="${esc(sg.name)}" loading="lazy">`
-              : `<span style="font-size:22px;font-weight:900;color:#fff;text-shadow:0 2px 6px rgba(0,0,0,0.4);">${esc(initials)}</span>`
-            }
-          </div>
-          <div class="singer-name-label">${esc(sg.name)}</div>
-        </div>`;
-      }).join("");
-    }
-
-    if ($("moodsGrid") && !$("moodsGrid").innerHTML) {
-      $("moodsGrid").innerHTML = ALL_MOODS.map((m) => `
-        <div class="mood-tile" data-mood-cat="${esc(m.cat)}" style="background:${m.bg}">
-          <span class="mood-emoji">${m.emoji}</span>
-          <span>${esc(m.label)}</span>
-        </div>`).join("");
-    }
-
-    // Separate English (Weeknd / Ed Sheeran), Hindi, and Telugu slices for the 3 carousels
-    const englishIndices = [];
-    const hindiIndices = [];
-    const teluguIndices = [];
-
-    songs.forEach((s, idx) => {
-      if (idx < 8) return;
-      const hay = ((s.title || "") + " " + (s.artist || "") + " " + (s.album || "")).toLowerCase();
-      if (/sheeran|weeknd|dua lipa|taylor|coldplay|bieber|alan walker|sabrina|blinding|starboy|shape of you/.test(hay)) {
-        englishIndices.push(idx);
-      } else if (/arijit|pritam|stree|animal|jawan|kesariya|chaleya|vishal|sachin|bollywood|aashiqui|kabir/.test(hay)) {
-        hindiIndices.push(idx);
-      } else {
-        teluguIndices.push(idx);
-      }
-    });
-
-    const rowTelugu = teluguIndices.length ? teluguIndices.slice(0, 12) : songs.slice(8, 18).map((_, i) => i + 8);
-    if ($("newMusicRow")) {
-      $("newMusicRow").innerHTML = rowTelugu.map((songIdx) => {
-        const s = songs[songIdx];
-        return `
-        <div class="horiz-card" data-hero-i="${songIdx}">
-          <div class="horiz-card-img-wrap">
-            <img src="${esc(s.image_url)}" alt="" loading="lazy">
-            <div class="spotify-corner-badge">♪</div>
-          </div>
-          <div class="horiz-card-sub">${esc(s.title)} • ${esc(s.artist)}</div>
-        </div>`;
-      }).join("");
-    }
-
-    const rowEng = englishIndices.length ? englishIndices.slice(0, 12) : songs.slice(18, 28).map((_, i) => i + 18);
-    if ($("jumpBackRow")) {
-      $("jumpBackRow").innerHTML = rowEng.map((songIdx) => {
-        const s = songs[songIdx];
-        return `
-        <div class="horiz-card" data-hero-i="${songIdx}">
-          <div class="horiz-card-img-wrap">
-            <img src="${esc(s.image_url)}" alt="" loading="lazy">
-            <div class="spotify-corner-badge">♪</div>
-          </div>
-          <div class="horiz-card-sub">${esc(s.title)} • ${esc(s.artist)}</div>
-        </div>`;
-      }).join("");
-    }
-
-    const rowHin = hindiIndices.length ? hindiIndices.slice(0, 12) : songs.slice(28, 38).map((_, i) => i + 28);
-    if ($("hindiHeroRow")) {
-      $("hindiHeroRow").innerHTML = rowHin.map((songIdx) => {
-        const s = songs[songIdx];
-        return `
-        <div class="horiz-card" data-hero-i="${songIdx}">
-          <div class="horiz-card-img-wrap">
-            <img src="${esc(s.image_url)}" alt="" loading="lazy">
-            <div class="spotify-corner-badge">♪</div>
-          </div>
-          <div class="horiz-card-sub">${esc(s.title)} • ${esc(s.artist)}</div>
-        </div>`;
-      }).join("");
-    }
-  }
-
-  $("homeHeroSections").addEventListener("click", (e) => {
-    const singerEl = e.target.closest("[data-singer-q]");
-    if (singerEl) {
-      const q = singerEl.getAttribute("data-singer-q");
-      const name = singerEl.getAttribute("data-singer-name");
-      $("query").value = name;
-      runSearch(q);
-      return;
-    }
-    const moodEl = e.target.closest("[data-mood-cat]");
-    if (moodEl) {
-      loadCategory(moodEl.getAttribute("data-mood-cat"));
-      return;
-    }
-    const el = e.target.closest("[data-hero-i]");
-    if (!el) return;
-    const idx = parseInt(el.dataset.heroI, 10);
-    if (currentSongs[idx]) {
-      window.Player.playSongs(currentSongs, idx, true);
-    }
-  });
-
-  // Automatic Infinite Scroll: Loads next page of songs automatically when scrolling near bottom!
-  let isAutoLoadingMore = false;
-  window.loadMoreInBackground = function () {
-    if (!isAutoLoadingMore && !openPlaylistId) {
-      isAutoLoadingMore = true;
-      loadMoreSongs().finally(() => { isAutoLoadingMore = false; });
-    }
-  };
-
-  if ($("contentScroll")) {
-    $("contentScroll").addEventListener("scroll", () => {
-      if (isAutoLoadingMore || openPlaylistId) return;
-      const sc = $("contentScroll");
-      if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 420) {
-        isAutoLoadingMore = true;
-        loadMoreSongs().finally(() => { isAutoLoadingMore = false; });
-      }
-    }, { passive: true });
-  }
-
   function normalizeSongKey(s) {
     const raw = String((s && (s.title || s.song)) || "").toLowerCase();
     return raw.replace(/\s*[\(\[].*?[\)\]]/g, "").replace(/\s*-\s*.*$/, "").replace(/[^a-z0-9]+/g, "") || String(s.id || "");
@@ -4545,6 +4429,251 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     return out;
   }
 
+  // ---- Render Home Screen Sections (Screenshots 70792, 70793, 70794) ----
+  function renderHomeHeroSections(songs) {
+    if (!songs || !songs.length) return;
+
+    // 1. 2x4 Top Quick Grid (Maestro, High beam, Aarya - 2, OG Telugu, Radhimaa, Ballari baava, Feel good, Karuppu)
+    if ($("quickTilesGrid")) {
+      $("quickTilesGrid").innerHTML = QUICK_8_CARDS.map((card, i) => {
+        const img = (songs[i] && songs[i].image_url) ? songs[i].image_url : card.img;
+        return `
+        <div class="quick-tile" data-quick-q="${esc(card.query)}" data-quick-title="${esc(card.title)}">
+          <img src="${esc(img)}" alt="" loading="lazy">
+          <div class="quick-tile-title">${esc(card.title)}</div>
+        </div>`;
+      }).join("");
+    }
+
+    // 2. "Picked for you" Featured Horizontal Card (Screenshot 70792.jpg)
+    const featured = songs[0];
+    if ($("pickedForYouCard") && featured) {
+      $("pickedForYouCard").innerHTML = `
+        <img class="picked-card-img" src="${esc(featured.image_url)}" alt="">
+        <div class="picked-card-body">
+          <div>
+            <div class="picked-card-tag">Single • ${esc(featured.album || "Featured")}</div>
+            <div class="picked-card-title">${esc(featured.title)}</div>
+            <div class="picked-card-artist">${esc(featured.artist)}</div>
+          </div>
+          <div class="picked-card-actions">
+            <button class="mini-icon-btn" onclick="event.stopPropagation(); window.downloadSongObj(window.allLoadedSongs[0])" title="Download">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#b3b3b3" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            </button>
+            <button class="picked-play-circle" title="Play">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+            </button>
+          </div>
+        </div>`;
+      $("pickedForYouCard").onclick = () => window.Player.playSongs(currentSongs, 0, true);
+    }
+
+    // 3. "For fans of Anirudh Ravichander" Row
+    const rowAnirudh = songs.slice(0, 10);
+    if ($("anirudhRow")) {
+      if (rowAnirudh[0] && rowAnirudh[0].image_url && $("fanHeaderAvatar")) {
+        $("fanHeaderAvatar").src = rowAnirudh[0].image_url;
+      }
+      $("anirudhRow").innerHTML = rowAnirudh.map((s, idx) => `
+        <div class="horiz-card" data-hero-i="${idx}">
+          <div class="horiz-card-img-wrap">
+            <img src="${esc(s.image_url)}" alt="" loading="lazy">
+            <div class="spotify-corner-badge">♪</div>
+          </div>
+          <div class="horiz-card-title">${esc(s.title)}</div>
+          <div class="horiz-card-sub">${esc(s.artist)}</div>
+        </div>`).join("");
+    }
+
+    // 4. "More of what you like", "Jump back in", "Happy"
+    const slice1 = songs.slice(8, 18);
+    if ($("newMusicRow")) {
+      $("newMusicRow").innerHTML = slice1.map((s, i) => `
+        <div class="horiz-card" data-hero-i="${i + 8}">
+          <div class="horiz-card-img-wrap">
+            <img src="${esc(s.image_url)}" alt="" loading="lazy">
+            <div class="spotify-corner-badge">♪</div>
+          </div>
+          <div class="horiz-card-title">${esc(s.title)}</div>
+          <div class="horiz-card-sub">${esc(s.artist)}</div>
+        </div>`).join("");
+    }
+
+    const slice2 = songs.slice(18, 28);
+    if ($("jumpBackRow")) {
+      $("jumpBackRow").innerHTML = slice2.map((s, i) => `
+        <div class="horiz-card" data-hero-i="${i + 18}">
+          <div class="horiz-card-img-wrap">
+            <img src="${esc(s.image_url)}" alt="" loading="lazy">
+            <div class="spotify-corner-badge">♪</div>
+          </div>
+          <div class="horiz-card-title">${esc(s.album || s.title)}</div>
+          <div class="horiz-card-sub">${esc(s.artist)}</div>
+        </div>`).join("");
+    }
+
+    const slice3 = songs.slice(28, 38);
+    if ($("hindiHeroRow")) {
+      $("hindiHeroRow").innerHTML = (slice3.length ? slice3 : slice1).map((s, i) => `
+        <div class="horiz-card" data-hero-i="${slice3.length ? i + 28 : i + 8}">
+          <div class="horiz-card-img-wrap">
+            <img src="${esc(s.image_url)}" alt="" loading="lazy">
+            <div class="spotify-corner-badge">♪</div>
+          </div>
+          <div class="horiz-card-title">${esc(s.title)}</div>
+          <div class="horiz-card-sub">${esc(s.artist)}</div>
+        </div>`).join("");
+    }
+
+    // 5. "Your favourite artists" Circular Row
+    if ($("singersRow")) {
+      $("singersRow").innerHTML = ALL_SINGERS.map((sg, sIdx) => {
+        const matched = songs.find((x) => (x.artist || "").toLowerCase().includes(sg.name.toLowerCase().split(" ")[0]));
+        const artUrl = matched ? matched.image_url : (songs[sIdx % songs.length] ? songs[sIdx % songs.length].image_url : "");
+        return `
+        <div class="singer-circle-card" data-singer-q="${esc(sg.query)}" data-singer-name="${esc(sg.name)}">
+          <div class="singer-avatar-ring">
+            <img src="${esc(artUrl)}" alt="${esc(sg.name)}" loading="lazy">
+          </div>
+          <div class="singer-name-label">${esc(sg.name)}</div>
+        </div>`;
+      }).join("");
+    }
+  }
+
+  $("homeHeroSections").addEventListener("click", (e) => {
+    const quickEl = e.target.closest("[data-quick-q]");
+    if (quickEl) {
+      window.openCategoryOrQuery(quickEl.getAttribute("data-quick-q"), quickEl.getAttribute("data-quick-title"));
+      return;
+    }
+    const singerEl = e.target.closest("[data-singer-q]");
+    if (singerEl) {
+      window.openCategoryOrQuery(singerEl.getAttribute("data-singer-q"), singerEl.getAttribute("data-singer-name"));
+      return;
+    }
+    const el = e.target.closest("[data-hero-i]");
+    if (el) {
+      const idx = parseInt(el.dataset.heroI, 10);
+      if (currentSongs[idx]) window.Player.playSongs(currentSongs, idx, true);
+    }
+  });
+
+  // ---- Search Tab Initialization (Matches Screenshots 70795, 70796, 70797) ----
+  function initSearchBrowseTiles() {
+    if ($("searchTopTilesGrid") && !$("searchTopTilesGrid").innerHTML) {
+      $("searchTopTilesGrid").innerHTML = SEARCH_TOP_TILES.map((t) => `
+        <div class="browse-tile" style="background-color:${t.color}" data-browse-cat="${esc(t.cat || "")}" data-browse-q="${esc(t.query || "")}" data-browse-title="${esc(t.title)}">
+          <div class="browse-tile-title">${esc(t.title)}</div>
+          <img class="browse-tile-img" src="${esc(t.img)}" alt="" loading="lazy">
+        </div>`).join("");
+    }
+
+    if ($("discoverReelsRow") && !$("discoverReelsRow").innerHTML) {
+      const reels = [
+        { tag: "#tollywood", q: "Devara Pushpa 2 Telugu", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
+        { tag: "#telugu dance", q: "Kurchi Madathapetti Daavudi Boss Party", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
+        { tag: "#uptempo", q: "The Weeknd Blinding Lights Starboy Ed Sheeran", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" }
+      ];
+      $("discoverReelsRow").innerHTML = reels.map((r) => `
+        <div class="discover-reel-card" data-browse-q="${esc(r.q)}" data-browse-title="${esc(r.tag)}">
+          <img src="${esc(r.img)}" alt="" loading="lazy">
+          <div class="discover-reel-tag">${esc(r.tag)}</div>
+        </div>`).join("");
+    }
+
+    if ($("searchBrowseAllGrid") && !$("searchBrowseAllGrid").innerHTML) {
+      $("searchBrowseAllGrid").innerHTML = SEARCH_BROWSE_ALL.map((t) => `
+        <div class="browse-tile" style="background-color:${t.color}" data-browse-cat="${esc(t.cat || "")}" data-browse-q="${esc(t.query || "")}" data-browse-title="${esc(t.title)}">
+          <div class="browse-tile-title">${esc(t.title)}</div>
+          <img class="browse-tile-img" src="${esc(t.img)}" alt="" loading="lazy">
+        </div>`).join("");
+    }
+  }
+
+  $("searchBrowseSection").addEventListener("click", (e) => {
+    const tile = e.target.closest("[data-browse-title]");
+    if (!tile) return;
+    const cat = tile.getAttribute("data-browse-cat");
+    const q = tile.getAttribute("data-browse-q");
+    const title = tile.getAttribute("data-browse-title");
+    if (cat) {
+      window.switchTab("home");
+      loadCategory(cat);
+    } else if (q) {
+      window.openCategoryOrQuery(q, title);
+    }
+  });
+
+  // ---- Your Library Tab Rendering (Matches Screenshot 70798.jpg) ----
+  function getLocalPlaylists() {
+    try { return JSON.parse(localStorage.getItem("musify_playlists_v3") || "[]"); }
+    catch (e) { return []; }
+  }
+
+  function saveLocalPlaylists(lists) {
+    try { localStorage.setItem("musify_playlists_v3", JSON.stringify(lists)); }
+    catch (e) {}
+  }
+
+  window.filterLibraryItems = function (filterType, btnEl) {
+    currentLibFilter = filterType;
+    document.querySelectorAll(".lib-pill").forEach((b) => b.classList.remove("active"));
+    if (btnEl) btnEl.classList.add("active");
+    renderLibraryView();
+  };
+
+  async function renderLibraryView() {
+    const box = $("libraryItemsList");
+    if (!box) return;
+    const profName = ($("userNameDisplay") && $("userNameDisplay").textContent) || "Listener";
+    const likedCount = getLikedSongs().length;
+    const customLists = getLocalPlaylists();
+
+    let html = "";
+
+    // 1. Pinned Liked Songs Row (Screenshot 70798.jpg top row)
+    if (currentLibFilter === "all" || currentLibFilter === "playlists") {
+      html += `
+        <div class="lib-row" onclick="openLikedSongs()">
+          <div class="lib-liked-box">♥</div>
+          <div class="lib-row-info">
+            <div class="lib-row-title">Liked Songs</div>
+            <div class="lib-row-sub"><span class="pin-green">📌</span> Playlist • ${esc(profName)} (${likedCount} songs)</div>
+          </div>
+        </div>`;
+
+      // 2. User's Custom Playlists
+      customLists.forEach((p) => {
+        const count = Array.isArray(p.songs) ? p.songs.length : (p.song_count || 0);
+        const cover = (p.songs && p.songs[0] && p.songs[0].image_url) || "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg";
+        html += `
+          <div class="lib-row" onclick="openPlaylist(${p.id})">
+            <img class="lib-row-art" src="${esc(cover)}" alt="">
+            <div class="lib-row-info">
+              <div class="lib-row-title">${esc(p.name)}</div>
+              <div class="lib-row-sub">Playlist • ${esc(profName)} • ${count} songs</div>
+            </div>
+          </div>`;
+      });
+    }
+
+    // 3. Curated Albums, Playlists & Artists from Screenshot 70798.jpg
+    CURATED_LIBRARY_ITEMS.forEach((item) => {
+      if (currentLibFilter !== "all" && item.type !== currentLibFilter) return;
+      html += `
+        <div class="lib-row" onclick="openCategoryOrQuery('${esc(item.query)}', '${esc(item.title)}')">
+          <img class="lib-row-art ${item.round ? "artist-round" : ""}" src="${esc(item.img)}" alt="">
+          <div class="lib-row-info">
+            <div class="lib-row-title">${esc(item.title)}</div>
+            <div class="lib-row-sub">${esc(item.sub)}</div>
+          </div>
+        </div>`;
+    });
+
+    box.innerHTML = html;
+  }
+
   function renderSongs(songs, append, hideLoadMore) {
     currentSongs = deduplicateClientSongs(append ? currentSongs.concat(songs) : songs);
     window.allLoadedSongs = currentSongs.slice();
@@ -4556,16 +4685,14 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
       return;
     }
     const cur = window.Player.currentSong();
-    const isHomeDefault = (currentCategory === "home" && !activeSearchQuery && !openPlaylistId && currentSongs.length > 10);
     $("content").innerHTML = '<div class="cards-grid">' + currentSongs.map((s, i) => {
-      if (isHomeDefault && i < 8) return "";
       const playing = Boolean(cur && cur.title === s.title);
       const liked = isSongLiked(s);
       return `
       <div class="song-card ${playing ? "playing-now" : ""}" data-i="${i}">
         <div class="card-img-wrapper">
           <img src="${esc(s.image_url)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
-          <button class="card-play-btn" data-act="play" title="Play with Video & Lyrics">
+          <button class="card-play-btn" data-act="play" title="Play">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
           </button>
         </div>
@@ -4574,10 +4701,10 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
           <div class="card-artist">${esc(s.artist)}</div>
         </div>
         <div class="card-actions">
-          <button data-act="like" class="${liked ? "liked" : ""}" title="Like">♥</button>
-          <button data-act="lyrics" title="Lyrics">🎤 Lyrics</button>
-          <button data-act="download" title="Download Full Song">⬇ Save</button>
-          <button data-act="playlist" title="Add to Playlist">+List</button>
+          <button data-act="like" class="${liked ? "liked" : ""}">♥</button>
+          <button data-act="lyrics">🎤 Lyrics</button>
+          <button data-act="download">⬇ Save</button>
+          <button data-act="playlist">+List</button>
         </div>
       </div>`;
     }).join("") + '</div>' +
@@ -4603,8 +4730,7 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
         setTimeout(window.scrollToLyricsCard, 250);
       } else if (act === "download") {
         window.downloadSongObj(song);
-      } else if (act === "queue") window.Player.addToQueue(song);
-      else if (act === "playlist") openAddToPlaylist(song);
+      } else if (act === "playlist") openAddToPlaylist(song);
       return;
     }
 
@@ -4638,7 +4764,6 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
       const more = data.songs || [];
       if (more.length) {
         renderSongs(more, true, false);
-        toast("Loaded " + more.length + " more songs");
       } else if (btn) {
         btn.style.display = "none";
       }
@@ -4647,7 +4772,27 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     }
   }
 
+  let isAutoLoadingMore = false;
+  window.loadMoreInBackground = function () {
+    if (!isAutoLoadingMore && !openPlaylistId) {
+      isAutoLoadingMore = true;
+      loadMoreSongs().finally(() => { isAutoLoadingMore = false; });
+    }
+  };
+
+  if ($("contentScroll")) {
+    $("contentScroll").addEventListener("scroll", () => {
+      if (isAutoLoadingMore || openPlaylistId) return;
+      const sc = $("contentScroll");
+      if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 420) {
+        isAutoLoadingMore = true;
+        loadMoreSongs().finally(() => { isAutoLoadingMore = false; });
+      }
+    }, { passive: true });
+  }
+
   async function loadCategory(cat) {
+    window.switchTab("home");
     currentCategory = cat;
     activeSearchQuery = "";
     currentPage = 1;
@@ -4657,13 +4802,10 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     const t = TITLES[cat] || [cat.charAt(0).toUpperCase() + cat.slice(1), ""];
     setHeading(t[0], t[1]);
     showLoading("Loading songs...");
-    closeMobileMenu();
     try {
       const data = await api("/api/category/" + encodeURIComponent(cat) + "?page=1");
       const list = data.songs || [];
       renderSongs(list, false, false);
-      // Seed full back-to-back queue with all loaded songs
-      window.allLoadedSongs = currentSongs.slice();
       if (window.Player.seedQueueIfEmpty) {
         window.Player.seedQueueIfEmpty(currentSongs);
       }
@@ -4671,79 +4813,96 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
   }
   window.loadCategory = loadCategory;
 
+  // ---- Search Tab Live Input (Matches Screenshots 70795-70797) ----
   async function runSearch(q) {
-    openPlaylistId = null;
     activeSearchQuery = q;
     currentPage = 1;
-    $("homeHeroSections").style.display = "none";
-    setHeading('Results for "' + q + '"', "Tap any song to play with video & lyrics");
-    showLoading("Searching...");
+    $("searchBrowseSection").style.display = "none";
+    $("searchResultsBox").style.display = "block";
+    $("searchResultsHeading").textContent = 'Results for "' + q + '"';
+    $("searchResultsList").innerHTML = '<div style="color:var(--text-muted);padding:20px 0;">Searching full-length songs...</div>';
     try {
       const data = await api("/api/search?q=" + encodeURIComponent(q) + "&page=1");
-      renderSongs(data.songs || [], false, false);
+      const list = deduplicateClientSongs(data.songs || []);
+      currentSongs = list;
+      window.allLoadedSongs = list.slice();
+      if (!list.length) {
+        $("searchResultsList").innerHTML = '<div style="color:var(--text-muted);padding:20px 0;">No matching songs found.</div>';
+        return;
+      }
+      $("searchResultsList").innerHTML = '<div class="library-list">' + list.map((s, idx) => `
+        <div class="lib-row" data-search-i="${idx}">
+          <img class="lib-row-art" src="${esc(s.image_url)}" alt="" loading="lazy">
+          <div class="lib-row-info">
+            <div class="lib-row-title">${esc(s.title)}</div>
+            <div class="lib-row-sub">Song • ${esc(s.artist)}</div>
+          </div>
+          <button class="mini-icon-btn" data-search-dl="${idx}" title="Download" style="padding:8px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b3b3b3" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+        </div>`).join("") + '</div>';
     } catch (err) {}
   }
+
+  $("searchResultsList").addEventListener("click", (e) => {
+    const dlBtn = e.target.closest("[data-search-dl]");
+    if (dlBtn) {
+      e.stopPropagation();
+      const idx = parseInt(dlBtn.getAttribute("data-search-dl"), 10);
+      if (currentSongs[idx]) window.downloadSongObj(currentSongs[idx]);
+      return;
+    }
+    const row = e.target.closest("[data-search-i]");
+    if (row) {
+      const idx = parseInt(row.getAttribute("data-search-i"), 10);
+      window.Player.playSongs(currentSongs, idx, true);
+    }
+  });
+
+  window.clearSearchInput = function () {
+    $("query").value = "";
+    $("searchResultsBox").style.display = "none";
+    $("searchBrowseSection").style.display = "block";
+  };
+
+  window.triggerArtistSearch = function (q) {
+    window.openCategoryOrQuery(q, q);
+  };
 
   $("query").addEventListener("input", (e) => {
     clearTimeout(searchTimer);
     const q = e.target.value.trim();
-    searchTimer = setTimeout(() => {
-      if (q) runSearch(q); else loadCategory(currentCategory);
-    }, 420);
+    if (!q) {
+      window.clearSearchInput();
+      return;
+    }
+    searchTimer = setTimeout(() => runSearch(q), 380);
   });
 
   document.querySelectorAll(".pill-btn").forEach((b) => {
-    b.addEventListener("click", () => { $("query").value = ""; loadCategory(b.dataset.category); });
+    b.addEventListener("click", () => loadCategory(b.dataset.category));
   });
 
-  // ---- Playlists (Dual-Synced: SQLite + localStorage) ----
-  function getLocalPlaylists() {
-    try { return JSON.parse(localStorage.getItem("musify_playlists_v3") || "[]"); }
-    catch (e) { return []; }
-  }
-
-  function saveLocalPlaylists(lists) {
-    try { localStorage.setItem("musify_playlists_v3", JSON.stringify(lists)); }
-    catch (e) {}
-  }
-
-  async function loadPlaylists() {
-    const box = $("sidebarPlaylists");
-    let localLists = getLocalPlaylists();
+  // ---- Playlists Management ----
+  window.openPlaylist = async function (id) {
+    window.switchTab("home");
+    openPlaylistId = id;
+    $("homeHeroSections").style.display = "none";
+    const localLists = getLocalPlaylists();
+    const localMatch = localLists.find((p) => Number(p.id) === Number(id));
     try {
-      const data = await api("/api/playlists");
-      const serverLists = data.playlists || [];
-      if (serverLists.length > 0) {
-        localLists = serverLists.map((sp) => {
-          const match = localLists.find((lp) => Number(lp.id) === Number(sp.id) || lp.name === sp.name);
-          const songs = match && Array.isArray(match.songs) ? match.songs : [];
-          return { ...sp, songs, song_count: Math.max(sp.song_count || 0, songs.length) };
-        });
-        saveLocalPlaylists(localLists);
+      const data = await api("/api/playlists/" + id);
+      const p = data.playlist;
+      if (localMatch && (!p.songs || !p.songs.length) && localMatch.songs && localMatch.songs.length) {
+        p.songs = localMatch.songs;
       }
-    } catch (err) {}
-
-    if (!localLists.length) {
-      box.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px;">No playlists yet. Tap + to create one.</div>';
+      renderPlaylistContent(p);
       return;
-    }
-    box.innerHTML = localLists.map((p) => {
-      const count = Array.isArray(p.songs) ? Math.max(p.songs.length, p.song_count || 0) : (p.song_count || 0);
-      return `
-        <div class="playlist-item ${Number(p.id) === Number(openPlaylistId) ? "active" : ""}" data-id="${p.id}">
-          <span>🎵 ${esc(p.name)}</span>
-          <span class="song-badge">${count}</span>
-        </div>`;
-    }).join("");
-  }
-
-  $("sidebarPlaylists").addEventListener("click", (e) => {
-    const item = e.target.closest(".playlist-item");
-    if (item) openPlaylist(parseInt(item.dataset.id, 10));
-  });
+    } catch (err) {}
+    if (localMatch) renderPlaylistContent(localMatch);
+  };
 
   function renderPlaylistContent(p) {
-    $("homeHeroSections").style.display = "none";
     currentSongs = p.songs || [];
     setHeading(p.name, p.description || (currentSongs.length + " songs"));
     let html = `
@@ -4766,24 +4925,6 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     $("content").innerHTML = html;
   }
 
-  async function openPlaylist(id) {
-    openPlaylistId = id;
-    closeMobileMenu();
-    const localLists = getLocalPlaylists();
-    const localMatch = localLists.find((p) => Number(p.id) === Number(id));
-    try {
-      const data = await api("/api/playlists/" + id);
-      const p = data.playlist;
-      if (localMatch && (!p.songs || !p.songs.length) && localMatch.songs && localMatch.songs.length) {
-        p.songs = localMatch.songs;
-      }
-      renderPlaylistContent(p);
-      loadPlaylists();
-      return;
-    } catch (err) {}
-    if (localMatch) renderPlaylistContent(localMatch);
-  }
-
   async function removeFromOpenPlaylist(entryId) {
     const localLists = getLocalPlaylists();
     const pl = localLists.find((p) => Number(p.id) === Number(openPlaylistId));
@@ -4794,7 +4935,7 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     }
     try { await api("/api/playlists/" + openPlaylistId + "/songs/" + entryId, { method: "DELETE" }); } catch (e) {}
     toast("Song removed");
-    openPlaylist(openPlaylistId);
+    window.openPlaylist(openPlaylistId);
   }
 
   async function deleteOpenPlaylist() {
@@ -4803,8 +4944,7 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     saveLocalPlaylists(localLists);
     try { await api("/api/playlists/" + openPlaylistId, { method: "DELETE" }); } catch (e) {}
     toast("Playlist deleted");
-    await loadPlaylists();
-    loadCategory("home");
+    window.switchTab("library");
   }
 
   function openModal(id) { $(id).classList.add("open"); }
@@ -4832,15 +4972,14 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     localLists.unshift(created);
     saveLocalPlaylists(localLists);
     closeModal("createPlaylistModal");
-    toast("Playlist created");
-    loadPlaylists();
+    toast("Playlist created: " + name);
+    renderLibraryView();
   });
 
   async function openAddToPlaylist(song) {
     pendingSong = song;
-    await loadPlaylists();
     const lists = getLocalPlaylists();
-    if (!lists.length) { toast("Tap Create (+) first to make a playlist"); return; }
+    if (!lists.length) { toast("Tap Create (+) in the bottom bar to create a playlist first"); return; }
     $("playlistSelect").innerHTML = lists.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
     openModal("addToPlaylistModal");
   }
@@ -4876,16 +5015,15 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
     }
     closeModal("addToPlaylistModal");
     toast("Added to playlist");
-    loadPlaylists();
   });
 
   // ---- Profile Avatar & Onboarding ----
   function showProfile(p) {
     const ch = (p.name || "P").trim().charAt(0).toUpperCase();
-    $("userNameDisplay").textContent = p.name;
-    $("userAgeDisplay").textContent = "Age " + p.age;
-    $("userAvatar").textContent = ch;
+    if ($("userNameDisplay")) $("userNameDisplay").textContent = p.name;
     if ($("topBarAvatar")) $("topBarAvatar").textContent = ch;
+    if ($("searchTabAvatar")) $("searchTabAvatar").textContent = ch;
+    if ($("libTabAvatar")) $("libTabAvatar").textContent = ch;
   }
 
   window.openProfileModal = function () {
@@ -4924,7 +5062,8 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
 
   saveLikedSongs(getLikedSongs());
   initProfile();
-  loadPlaylists();
+  initSearchBrowseTiles();
+  renderLibraryView();
   loadCategory("home");
 })();
 '''
@@ -4946,7 +5085,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-real-hits-v17";
+SW_JS = r'''const CACHE = "musify-spotify-exact-v18";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
