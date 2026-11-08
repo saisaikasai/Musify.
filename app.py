@@ -345,8 +345,7 @@ REQ_HEADERS = {
     "Referer": "https://www.jiosaavn.com/",
     "X-Forwarded-For": "49.205.120.14",
     "X-Real-IP": "49.205.120.14",
-    "CF-Connecting-IP": "49.205.120.14",
-    "Cookie": "L=telugu%2Chindi%2Cenglish%2Ctamil%2Cpunjabi"
+    "CF-Connecting-IP": "49.205.120.14"
 }
 
 SAAVN_MIRRORS = [
@@ -968,10 +967,44 @@ def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, pag
 
 
 def _normalize_user_query(q: str) -> List[str]:
-    """Converts user searches into clean, short 2-3 word queries that JioSaavn ranks accurately."""
+    """Expands user searches (including 'rak', 'rakta charitra', 'high beam', 'item songs', 'mass', 'om', 'dhanush')."""
     q_clean = re.sub(r"\s+", " ", q.strip())
     q_low = q_clean.lower()
 
+    if q_low in ("rak", "rakta", "raktha", "raktacharitra", "rakta charitra", "dorikithe", "dorikithe chastavu"):
+        return [
+            "Dorikithe Chastavu Rakta Charitra",
+            "Rakta Charitra",
+            "Katthula Toh Karma Dharma Rakta Charitra",
+            "Gundello Dabbunoda Rakta Charitra"
+        ]
+    if "high beam" in q_low or "highbeam" in q_low:
+        return [
+            "Dorikithe Chastavu Rakta Charitra",
+            "Hungry Cheetah OG",
+            "Fear Song Devara",
+            "Ayudha Pooja Devara",
+            "Daaku Maharaaj Thaman",
+            "Sooreede Salaar",
+            "Jai Balayya Akhanda",
+            "Bheemla Nayak Title Song",
+            "Hukum Jailer"
+        ]
+    if "item" in q_low:
+        return [
+            "Kissik Pushpa 2",
+            "Oo Antava Pushpa",
+            "Pakka Local Janatha Garage",
+            "Jigelu Rani Rangasthalam",
+            "Ringa Ringa Arya 2",
+            "Aa Ante Amalapuram",
+            "Kevvu Keka Gabbar Singh",
+            "Dimaak Kharaab iSmart Shankar",
+            "Blockbuster Sarrainodu",
+            "Swing Zara Jai Lava Kusa",
+            "Bhoom Bhaddhal Krack",
+            "Ratthaalu Khaidi No 150"
+        ]
     if "shareen" in q_low or "sheeran" in q_low:
         return [
             "Ed Sheeran",
@@ -1023,11 +1056,11 @@ def _fetch_single_query(sub_q: str, page: int = 1, limit: int = 25) -> List[Dict
     return []
 
 
-def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: int = 15, max_per_album: int = 0) -> List[Dict[str, Any]]:
+def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: int = 12, max_per_album: int = 0) -> List[Dict[str, Any]]:
     if not queries:
         return []
     ordered_buckets: List[List[Dict[str, Any]]] = [[] for _ in queries]
-    with ThreadPoolExecutor(max_workers=min(8, len(queries))) as pool:
+    with ThreadPoolExecutor(max_workers=min(10, len(queries))) as pool:
         future_map = {
             pool.submit(_fetch_single_query, q_str, page, per_query_limit): idx
             for idx, q_str in enumerate(queries)
@@ -1039,8 +1072,6 @@ def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: 
             except Exception:
                 ordered_buckets[idx] = []
 
-    # Interleave results across buckets (round-robin) so the top of the page has rich variety
-    # instead of 10 songs from a single query/movie in a row!
     interleaved: List[Dict[str, Any]] = []
     max_len = max((len(b) for b in ordered_buckets), default=0)
     for row_i in range(max_len):
@@ -1056,7 +1087,7 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    cache_key = f"search_v17::{clean_q.lower()}::p{page}"
+    cache_key = f"search_v19::{clean_q.lower()}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1070,7 +1101,7 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
             return deduped
         return FALLBACK_CATALOG
 
-    deduped = _parallel_fetch_queries(queries_to_run, page=page, per_query_limit=20)
+    deduped = _parallel_fetch_queries(queries_to_run, page=page, per_query_limit=18)
     if deduped:
         _cache_set(cache_key, deduped)
         return deduped
@@ -1079,37 +1110,95 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
 
 def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     """
-    Uses short, exact 1-3 word queries (which JioSaavn ranks accurately) and round-robin interleaving
-    with max_per_album=2 so no single old album (like 2011 Veera or KGF) ever floods the screen!
+    Fetches full-length Telugu Mass, High Beam, Item Songs, Melodies, OM Chapter 1,
+    English (Ed Sheeran, The Weeknd), and Hindi hits in parallel.
     """
     cat = category.lower().strip()
-    cache_key = f"cat_v17::{cat}::p{page}"
+    cache_key = f"cat_v19::{cat}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
 
     category_queries = {
         "home": [
-            "Devara Telugu",
-            "Pushpa 2 Telugu",
-            "Guntur Kaaram",
-            "Hi Nanna",
-            "Ala Vaikunthapurramuloo",
-            "Sid Sriram Telugu",
-            "Ed Sheeran",
-            "The Weeknd",
+            "Dorikithe Chastavu Rakta Charitra",
+            "Hungry Cheetah OG",
+            "Fear Song Devara",
+            "Kissik Pushpa 2",
+            "Kurchi Madathapetti Guntur Kaaram",
+            "Daaku Maharaaj Thaman",
+            "Alaakaa Loova",
+            "Hi Nanna Telugu",
+            "Sirivennela Shyam Singha Roy",
+            "Ed Sheeran Shape of You",
+            "The Weeknd Blinding Lights",
             "Arijit Singh"
+        ],
+        "highbeam": [
+            "Dorikithe Chastavu Rakta Charitra",
+            "Rakta Charitra",
+            "Hungry Cheetah OG",
+            "Fear Song Devara",
+            "Ayudha Pooja Devara",
+            "Daaku Maharaaj Thaman",
+            "Sooreede Salaar",
+            "Sound of Salaar",
+            "Jai Balayya Akhanda",
+            "Akhanda Title Song",
+            "Bheemla Nayak Title Song",
+            "Hukum Jailer",
+            "Vikram Title Track Anirudh",
+            "Jagadame Pokiri",
+            "Agni Skalana Chatrapathi"
+        ],
+        "itemsongs": [
+            "Kissik Pushpa 2",
+            "Oo Antava Pushpa",
+            "Daavudi Devara",
+            "Kurchi Madathapetti",
+            "Pakka Local Janatha Garage",
+            "Jigelu Rani Rangasthalam",
+            "Ringa Ringa Arya 2",
+            "Aa Ante Amalapuram Arya",
+            "Kevvu Keka Gabbar Singh",
+            "Dimaak Kharaab iSmart Shankar",
+            "Swing Zara Jai Lava Kusa",
+            "Blockbuster Sarrainodu",
+            "Ratthaalu Khaidi No 150",
+            "Ammadu Lets Do Kummudu",
+            "Daang Daang Sarileru Neekevvaru",
+            "Bhoom Bhaddhal Krack",
+            "Junction Lo Aagadu",
+            "Top Lesi Poddi Iddarammayilatho",
+            "Ippatikinka Pokiri",
+            "Pilla Chao Businessman"
+        ],
+        "mass": [
+            "Kurchi Madathapetti Guntur Kaaram",
+            "Pushpa Pushpa Pushpa 2",
+            "Daavudi Devara",
+            "Fear Song Devara",
+            "Dorikithe Chastavu Rakta Charitra",
+            "Hungry Cheetah OG",
+            "Daaku Maharaaj Thaman",
+            "Boss Party Waltair Veerayya",
+            "Jai Balayya Veera Simha Reddy",
+            "Naatu Naatu RRR",
+            "Bheemla Nayak Title Song",
+            "Dimaak Kharaab iSmart Shankar",
+            "Dekho Dekho Gabbar Singh",
+            "Dole Dole Pokiri"
         ],
         "telugu": [
             "Devara Telugu",
             "Pushpa 2 Telugu",
             "Guntur Kaaram",
+            "Daaku Maharaaj Thaman",
             "Hi Nanna",
             "Kalki 2898 AD Telugu",
             "Salaar Telugu",
             "Sita Ramam Telugu",
             "Ala Vaikunthapurramuloo",
-            "Geetha Govindam",
             "Sid Sriram Telugu"
         ],
         "om": [
@@ -1161,14 +1250,6 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Aashiqui 2",
             "Kabir Singh"
         ],
-        "mass": [
-            "Kurchi Madathapetti",
-            "Daavudi Devara",
-            "Pushpa Pushpa",
-            "Oo Antava Telugu",
-            "Naatu Naatu RRR",
-            "Jai Balayya"
-        ],
         "chill": [
             "Sirivennela Shyam Singha Roy",
             "Oohalu Gusagusalade",
@@ -1177,12 +1258,13 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Dear Comrade Telugu"
         ],
         "workout": [
+            "Dorikithe Chastavu Rakta Charitra",
+            "Hungry Cheetah OG",
             "Salaar Telugu",
             "Vikram Anirudh",
             "Jailer Anirudh",
             "Arjan Vailly",
-            "Believer Imagine Dragons",
-            "Starboy The Weeknd"
+            "Believer Imagine Dragons"
         ],
         "drive": [
             "Ye Maaya Chesave",
@@ -1192,12 +1274,12 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Blinding Lights The Weeknd"
         ],
         "party": [
+            "Kissik Pushpa 2",
+            "Oo Antava Pushpa",
+            "Kurchi Madathapetti",
             "Boss Party",
             "Dj Tillu",
-            "Tauba Tauba",
-            "Aaj Ki Raat Stree 2",
-            "Brown Munde AP Dhillon",
-            "Levitating Dua Lipa"
+            "Aaj Ki Raat Stree 2"
         ],
         "evergreen": [
             "SP Balasubrahmanyam Telugu",
@@ -1223,10 +1305,10 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
         "trending": [
             "Devara Telugu",
             "Pushpa 2 Telugu",
+            "Daaku Maharaaj Thaman",
             "Alaakaa Loova",
             "Stree 2",
-            "The Weeknd",
-            "Ed Sheeran"
+            "The Weeknd"
         ],
         "punjabi": [
             "AP Dhillon",
@@ -1239,15 +1321,15 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     queries = category_queries.get(cat, [f"{cat} Telugu", f"{cat}"])
 
     if page == 1:
-        # Use max_per_album=2 on category feeds so no single album floods 6 slots in a row!
-        combined = _parallel_fetch_queries(queries, page=1, per_query_limit=12, max_per_album=2)
+        max_alb = 4 if cat in ("highbeam", "itemsongs", "mass") else 2
+        combined = _parallel_fetch_queries(queries, page=1, per_query_limit=10, max_per_album=max_alb)
         if combined:
             _cache_set(cache_key, combined)
             return combined
 
     selected_q = queries[(page - 1) % len(queries)]
     sub_page = ((page - 1) // len(queries)) + 1
-    results = _parallel_fetch_queries([selected_q, queries[page % len(queries)]], page=sub_page, per_query_limit=20, max_per_album=3)
+    results = _parallel_fetch_queries([selected_q, queries[page % len(queries)]], page=sub_page, per_query_limit=20, max_per_album=4)
     if results:
         _cache_set(cache_key, results)
         return results
@@ -1290,7 +1372,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=18">
+  <link rel="stylesheet" href="/static/css/style.css?v=19">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1309,8 +1391,10 @@ INDEX_HTML = r'''<!DOCTYPE html>
           <div id="topBarAvatar" class="top-avatar" onclick="openProfileModal()">P</div>
           <div class="category-pills">
             <button class="pill-btn active" data-category="home">All</button>
-            <button class="pill-btn" data-category="telugu">Music</button>
-            <button class="pill-btn" data-category="trending">Podcasts</button>
+            <button class="pill-btn" data-category="highbeam">High Beam 🔥</button>
+            <button class="pill-btn" data-category="itemsongs">Item Songs 💃</button>
+            <button class="pill-btn" data-category="mass">Mass Beats ⚡</button>
+            <button class="pill-btn" data-category="telugu">Telugu New</button>
             <button class="pill-btn" data-category="om">OM • Dhanush</button>
             <button class="pill-btn" data-category="english">English</button>
             <button class="pill-btn" data-category="hindi">Hindi</button>
@@ -1525,6 +1609,11 @@ INDEX_HTML = r'''<!DOCTYPE html>
       </div>
 
       <div id="npSwipeIndicator" style="display:none;"></div>
+
+      <!-- Large Centered Square Album Poster (Matches Screenshot 70811.jpg) -->
+      <div class="np-center-poster-wrap">
+        <img id="npCenterPoster" class="np-center-poster" src="https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" alt="">
+      </div>
 
       <div class="np-stage-bottom">
         <div id="npFloatingLyric" class="np-floating-lyric" onclick="scrollToLyricsCard()"></div>
@@ -1745,19 +1834,19 @@ INDEX_HTML = r'''<!DOCTYPE html>
 
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/js/player.js?v=18"></script>
-  <script src="/static/js/app.js?v=18"></script>
+  <script src="/static/js/player.js?v=19"></script>
+  <script src="/static/js/app.js?v=19"></script>
   <script>
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-spotify-exact-v18") caches.delete(k);
+          if (k !== "musify-highbeam-item-v19") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=18").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=19").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -2627,13 +2716,13 @@ html, body {
 .np-video-stage {
   position: relative;
   width: 100%;
-  height: var(--stage-h, 86dvh);
-  max-height: var(--stage-h, 86dvh);
+  height: var(--stage-h, 88dvh);
+  max-height: var(--stage-h, 88dvh);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   overflow: hidden;
-  background-color: #141414;
+  background: linear-gradient(180deg, #7c161b 0%, #4a0c10 58%, #1a0406 100%);
   touch-action: pan-y;
 }
 
@@ -2643,6 +2732,7 @@ html, body {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  opacity: 0.28;
   z-index: 1;
 }
 
@@ -2652,7 +2742,7 @@ html, body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: brightness(0.65) contrast(1.08);
+  filter: blur(36px) brightness(0.42) saturate(1.6);
   z-index: 0;
 }
 
@@ -2661,12 +2751,31 @@ html, body {
   inset: 0;
   background: linear-gradient(
     180deg,
-    rgba(0, 0, 0, 0.55) 0%,
-    rgba(0, 0, 0, 0.1) 35%,
-    rgba(0, 0, 0, 0.45) 68%,
-    rgba(12, 12, 12, 0.98) 100%
+    rgba(110, 16, 22, 0.45) 0%,
+    rgba(60, 8, 12, 0.35) 50%,
+    rgba(18, 4, 6, 0.95) 100%
   );
   z-index: 2;
+}
+
+.np-center-poster-wrap {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 24px;
+  flex: 1;
+  min-height: 0;
+}
+
+.np-center-poster {
+  width: min(76vw, 310px);
+  height: min(76vw, 310px);
+  aspect-ratio: 1;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.65);
 }
 
 .np-top-bar {
@@ -2873,7 +2982,7 @@ html, body {
 }
 
 .np-lyrics-card {
-  background: linear-gradient(165deg, #353f4e 0%, #272f3b 100%);
+  background: linear-gradient(165deg, #7a1216 0%, #4a0a0d 100%);
   border-radius: 16px;
   padding: 20px;
   display: flex;
@@ -3633,6 +3742,7 @@ PLAYER_JS = r'''/* =============================================================
     if ($("npTitle")) $("npTitle").textContent = s ? s.title : "Select a song";
     if ($("npArtist")) $("npArtist").textContent = s ? s.artist : "Artist";
     if (s && s.image_url && $("npThumb")) $("npThumb").src = s.image_url;
+    if (s && s.image_url && $("npCenterPoster")) $("npCenterPoster").src = s.image_url;
 
     document.title = s ? s.title + " • Musify" : "Musify";
 
@@ -4208,16 +4318,16 @@ APP_JS = r'''/* ================================================================
   let activeSearchQuery = "";
   let currentLibFilter = "all";
 
-  // 1. Exact 8 Top Quick-Play Cards from Screenshot 70792.jpg
+  // 1. Exact 8 Top Quick-Play Cards from Screenshot 70792.jpg (with High Beam, Rakta Charitra & Item Songs)
   const QUICK_8_CARDS = [
     { title: "Maestro", query: "Sirivennela Shyam Singha Roy Mickey J Meyer", img: "https://c.saavncdn.com/693/Shyam-Singha-Roy-Telugu-2021-20211222151513-500x500.jpg" },
-    { title: "High beam", query: "Telugu Mass Hits Thaman DSP Anirudh", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
+    { title: "High beam 🔥", cat: "highbeam", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
     { title: "Aarya - 2 (Original Motion...)", query: "Arya 2 Devi Sri Prasad Allu Arjun", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" },
     { title: "OG Telugu Full Album", query: "Hungry Cheetah OG Thaman Pawan Kalyan", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
-    { title: "Radhimaa (From \"Think Indie\")", query: "Sai Abhyankkar Katchi Sera Aasa Kooda", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" },
-    { title: "Ballari baava 🔥", query: "Pushpa 2 Devara Telugu Mass Songs", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
+    { title: "Telugu Item Songs 💃", cat: "itemsongs", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
+    { title: "Raktacharitra • Mass", query: "Dorikithe Chastavu Rakta Charitra", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
     { title: "Feel good Love Songs in Telugu", query: "Hi Nanna Sita Ramam Geetha Govindam Sid Sriram", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg" },
-    { title: "Karuppu (Original Motion...)", query: "Alaakaa Loova Senjudare Veezha Veera Sai Abhyankkar", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" }
+    { title: "OM Chapter 1 • Karuppu", cat: "om", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" }
   ];
 
   // 2. Search Tab Colorful Browse Tiles (Screenshots 70795, 70796, 70797)
@@ -4252,9 +4362,10 @@ APP_JS = r'''/* ================================================================
 
   // 3. Curated Library Items Matching Screenshot 70798.jpg
   const CURATED_LIBRARY_ITEMS = [
-    { type: "playlists", title: "High beam", sub: "Playlist • Musify", query: "Telugu Mass Hits Pushpa 2 Devara Guntur Kaaram", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
-    { type: "albums", title: "Daaku Maharaaj", sub: "EP • Thaman S", query: "Daaku Maharaaj Thaman Balakrishna Telugu", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
-    { type: "albums", title: "Raktacharitra", sub: "Compilation • Various Artists", query: "Raktacharitra Telugu Songs", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" },
+    { type: "playlists", title: "High beam 🔥", sub: "Playlist • Mass & Elevation Hits", cat: "highbeam", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
+    { type: "playlists", title: "Tollywood Sensational Item Songs 💃", sub: "Playlist • 20 Non-Stop Special Dance Hits", cat: "itemsongs", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
+    { type: "albums", title: "Daaku Maharaaj", sub: "EP • Thaman S", query: "Daaku Maharaaj Thaman", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
+    { type: "albums", title: "Raktacharitra (Dorikithe Chastavu)", sub: "Album • Dharam-Sandeep, RGV", query: "Dorikithe Chastavu Rakta Charitra", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
     { type: "playlists", title: "Jailer 2 - All Songs [Telugu] ✨🔥", sub: "Playlist • Anirudh ✨🎧", query: "Jailer Telugu Anirudh Hukum Kaavaalaa", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
     { type: "albums", title: "Jailer 2 (Original Motion Picture Soundtrack)", sub: "Album • Anirudh Ravichander", query: "Anirudh Ravichander Jailer Vikram Leo Devara", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" },
     { type: "albums", title: "Veezha Veera (From \"OM Chapter 1: Udhiram\")", sub: "Single • Sai Abhyankkar", query: "Alaakaa Loova Senjudare Veezha Veera Sai Abhyankkar", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" },
@@ -4286,7 +4397,9 @@ APP_JS = r'''/* ================================================================
   ];
 
   const TITLES = {
-    home: ["Recommended for today", "Full-length Telugu, English & Hindi streams • Plays back-to-back"],
+    home: ["Recommended for today", "Full-length Telugu, High Beam, Item Songs, English & Hindi • Back-to-back"],
+    highbeam: ["High Beam 🔥 • Mass & Elevation", "Dorikithe Chastavu, Hungry Cheetah, Fear Song, Daaku Maharaaj, Salaar, Akhanda & Hukum"],
+    itemsongs: ["Tollywood Sensational Item Songs 💃", "Kissik, Oo Antava, Daavudi, Pakka Local, Jigelu Rani, Ringa Ringa, Kevvu Keka & more"],
     telugu: ["New & Trending Telugu Hits", "Devara, Pushpa 2, Guntur Kaaram, Hi Nanna, Sid Sriram & Thaman"],
     om: ["OM Chapter 1: Udhiram • Dhanush", "Alaakaa Loova, Senjudare, Veezha Veera, Sai Abhyankkar & Dhanush"],
     english: ["Ed Sheeran, The Weeknd & English Hits", "Blinding Lights, Shape of You, Starboy, Perfect & global pop"],
@@ -4436,9 +4549,9 @@ APP_JS = r'''/* ================================================================
     // 1. 2x4 Top Quick Grid (Maestro, High beam, Aarya - 2, OG Telugu, Radhimaa, Ballari baava, Feel good, Karuppu)
     if ($("quickTilesGrid")) {
       $("quickTilesGrid").innerHTML = QUICK_8_CARDS.map((card, i) => {
-        const img = (songs[i] && songs[i].image_url) ? songs[i].image_url : card.img;
+        const img = card.img || ((songs[i] && songs[i].image_url) ? songs[i].image_url : "");
         return `
-        <div class="quick-tile" data-quick-q="${esc(card.query)}" data-quick-title="${esc(card.title)}">
+        <div class="quick-tile" data-quick-cat="${esc(card.cat || "")}" data-quick-q="${esc(card.query || "")}" data-quick-title="${esc(card.title)}">
           <img src="${esc(img)}" alt="" loading="lazy">
           <div class="quick-tile-title">${esc(card.title)}</div>
         </div>`;
@@ -4542,9 +4655,12 @@ APP_JS = r'''/* ================================================================
   }
 
   $("homeHeroSections").addEventListener("click", (e) => {
-    const quickEl = e.target.closest("[data-quick-q]");
+    const quickEl = e.target.closest("[data-quick-title]");
     if (quickEl) {
-      window.openCategoryOrQuery(quickEl.getAttribute("data-quick-q"), quickEl.getAttribute("data-quick-title"));
+      const qCat = quickEl.getAttribute("data-quick-cat");
+      const qStr = quickEl.getAttribute("data-quick-q");
+      if (qCat) loadCategory(qCat);
+      else window.openCategoryOrQuery(qStr, quickEl.getAttribute("data-quick-title"));
       return;
     }
     const singerEl = e.target.closest("[data-singer-q]");
@@ -4661,8 +4777,9 @@ APP_JS = r'''/* ================================================================
     // 3. Curated Albums, Playlists & Artists from Screenshot 70798.jpg
     CURATED_LIBRARY_ITEMS.forEach((item) => {
       if (currentLibFilter !== "all" && item.type !== currentLibFilter) return;
+      const clickAction = item.cat ? `loadCategory('${esc(item.cat)}')` : `openCategoryOrQuery('${esc(item.query)}', '${esc(item.title)}')`;
       html += `
-        <div class="lib-row" onclick="openCategoryOrQuery('${esc(item.query)}', '${esc(item.title)}')">
+        <div class="lib-row" onclick="${clickAction}">
           <img class="lib-row-art ${item.round ? "artist-round" : ""}" src="${esc(item.img)}" alt="">
           <div class="lib-row-info">
             <div class="lib-row-title">${esc(item.title)}</div>
@@ -5085,7 +5202,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-spotify-exact-v18";
+SW_JS = r'''const CACHE = "musify-highbeam-item-v19";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
