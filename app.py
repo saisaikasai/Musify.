@@ -341,8 +341,7 @@ lyrics_base_url = "https://www.jiosaavn.com/api.php?__call=lyrics.getLyrics&ctx=
 REQ_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "te-IN,te;q=0.95,en-IN;q=0.9,hi-IN;q=0.8,en-US;q=0.7",
-    "Cookie": "L=telugu%2Ctamil%2Chindi%2Cenglish",
+    "Accept-Language": "en-IN,te-IN;q=0.9,hi-IN;q=0.8,en-US;q=0.7",
     "Referer": "https://www.jiosaavn.com/",
     "X-Forwarded-For": "49.205.120.14",
     "X-Real-IP": "49.205.120.14",
@@ -662,37 +661,19 @@ def _dedup_key(song: Dict[str, Any]) -> str:
 JUNK_KEYWORDS = (
     "marimba", "rock a bye", "cover songs collective", "jess.x.kirby", "shape of young",
     "karaoke", "lullaby", "8-bit", "8 bit", "ringtone", "tribute to", "originally performed",
-    "instrumental version", "piano cover", "midi", "workout remix",
-    "mila toh marega", "mila to marega", "khaul khaul ke", "paisewala", "maar de",
-    "kaaton se", "har jazbe mein", "maarapapa", "khel shuru"
-)
-
-RAKTACHARITRA_TELUGU_POSTER = "https://c.saavncdn.com/208/Raktacharitra-Telugu-2010-20190220140106-500x500.jpg"
-RAKTACHARITRA_TELUGU_TITLES = (
-    "dorikithe chastavu", "katthula toh", "thudilenidhi", "dabbunnoda", "dabbunoda",
-    "champaraa", "champara", "gundello", "karma dharma"
+    "instrumental version", "piano cover", "midi", "workout remix"
 )
 
 
 def _is_junk_or_fake_cover(song: Dict[str, Any]) -> bool:
-    """Filters out fake marimba/lullaby/karaoke cover knockoffs and Hindi Rakta Charitra duplicates."""
+    """Filters out fake marimba/lullaby/karaoke cover knockoffs (like 'Rock A Bye Pop Rock' or 'Shape of Young')."""
     title = str(song.get("title") or song.get("song") or "").lower()
     artist = str(song.get("artist") or song.get("primary_artists") or "").lower()
     album = str(song.get("album") or "").lower()
-    lang = str(song.get("language") or "").lower()
     combined = f"{title} {artist} {album}"
     for kw in JUNK_KEYWORDS:
         if kw in combined:
             return True
-    # Block Hindi Rakta Charitra / Rakht Charitra songs when user wants Telugu Raktacharitra
-    if ("rakta charitra" in album or "rakht charitra" in album) and lang == "hindi":
-        if not any(tk in title for tk in RAKTACHARITRA_TELUGU_TITLES):
-            return True
-    # Normalize Telugu Raktacharitra poster & album label
-    if any(tk in title for tk in ("dorikithe chastavu", "katthula toh", "thudilenidhi", "dabbunnoda", "champaraa")):
-        song["image_url"] = RAKTACHARITRA_TELUGU_POSTER
-        if not song.get("album") or "rakta" in album:
-            song["album"] = "Raktacharitra (Telugu)"
     return False
 
 
@@ -957,85 +938,6 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 35) -> List[Di
     return []
 
 
-def _fetch_saavn_url_direct(song_url: str, lyrics: bool = False) -> List[Dict[str, Any]]:
-    """Resolves a direct JioSaavn song URL (e.g. Raktacharitra Telugu tracks) via webapi.get and mirrors."""
-    token = song_url.rstrip("/").split("/")[-1].strip()
-    out: List[Dict[str, Any]] = []
-    # 1. Official JioSaavn v4 webapi.get by URL token
-    if token:
-        try:
-            w_url = (
-                "https://www.jiosaavn.com/api.php?__call=webapi.get"
-                f"&token={urllib.parse.quote(token)}&type=song&includeMetaTags=0"
-                "&ctx=web6dot0&api_version=4&_format=json&_marker=0"
-            )
-            w_resp = requests.get(w_url, headers=REQ_HEADERS, timeout=5)
-            w_data = _parse_saavn_json(w_resp.text)
-            if isinstance(w_data, dict):
-                raw_list = w_data.get("songs") if isinstance(w_data.get("songs"), list) else list(w_data.values())
-                for item in raw_list:
-                    if isinstance(item, dict) and (item.get("id") or item.get("encrypted_media_url") or item.get("more_info")):
-                        formatted = format_song(item, lyrics=lyrics)
-                        if formatted.get("media_url") and not _is_junk_or_fake_cover(formatted):
-                            out.append(formatted)
-                if out:
-                    return out
-        except Exception as e:
-            logger.debug(f"webapi.get token error ({token}): {e}")
-
-    # 2. Mirror link lookup
-    for mirror in SAAVN_MIRRORS:
-        try:
-            m_url = f"{mirror}/songs?link={urllib.parse.quote(song_url)}"
-            m_resp = requests.get(m_url, headers=REQ_HEADERS, timeout=5)
-            if m_resp.status_code == 200:
-                m_data = m_resp.json()
-                raw_items = m_data.get("data") if isinstance(m_data.get("data"), list) else []
-                for raw in raw_items:
-                    if not isinstance(raw, dict):
-                        continue
-                    dls = raw.get("downloadUrl") or []
-                    raw_urls = [
-                        _ensure_https(d.get("url") or d.get("link") if isinstance(d, dict) else str(d))
-                        for d in reversed(dls) if d
-                    ] if isinstance(dls, list) else []
-                    if not raw_urls:
-                        continue
-                    urls = _build_full_aac_urls(raw_urls[0], is_320=True)
-                    artists = raw.get("artists", {})
-                    if isinstance(artists, dict) and isinstance(artists.get("primary"), list) and artists["primary"]:
-                        artist_str = ", ".join([format_str(a.get("name", "")) for a in artists["primary"] if isinstance(a, dict)])
-                    else:
-                        artist_str = format_str(raw.get("primaryArtists") or raw.get("artist") or "Ravindra Upadhyay, Vishvesh Parmar, Sandeep Patil")
-                    album_info = raw.get("album")
-                    album_str = format_str(album_info.get("name") if isinstance(album_info, dict) else (album_info or "Raktacharitra"))
-                    song_obj = {
-                        "id": str(raw.get("id", token)),
-                        "title": format_str(raw.get("name") or raw.get("title") or "Dorikithe Chastavu"),
-                        "artist": artist_str,
-                        "album": album_str,
-                        "duration": int(raw.get("duration") or 228),
-                        "image_url": RAKTACHARITRA_TELUGU_POSTER,
-                        "media_url": urls[0],
-                        "backup_urls": urls
-                    }
-                    if not _is_junk_or_fake_cover(song_obj):
-                        out.append(song_obj)
-                if out:
-                    return out
-        except Exception:
-            pass
-
-    # 3. Fallback via get_song_id
-    sid = get_song_id(song_url)
-    if sid:
-        s = get_song(sid, lyrics)
-        if isinstance(s, dict) and s.get("media_url"):
-            _is_junk_or_fake_cover(s)
-            return [s]
-    return []
-
-
 def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 35) -> Any:
     """
     Combines India-backed Saavn Mirrors + Direct JioSaavn v4 search concurrently
@@ -1043,7 +945,8 @@ def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, pag
     """
     clean_q = query.strip()
     if clean_q.startswith("http") and "saavn.com" in clean_q:
-        return _fetch_saavn_url_direct(clean_q, lyrics=lyrics)
+        sid = get_song_id(clean_q)
+        return get_song(sid, lyrics) if sid else []
 
     if not songdata:
         try:
@@ -1068,25 +971,16 @@ def _normalize_user_query(q: str) -> List[str]:
     q_clean = re.sub(r"\s+", " ", q.strip())
     q_low = q_clean.lower()
 
-    if any(k in q_low for k in ("rak", "rakta", "raktha", "charitra", "dorikithe", "katthula", "thudilenidhi", "dabbunnoda", "champara")):
+    if q_low in ("rak", "rakta", "raktha", "raktacharitra", "rakta charitra", "dorikithe", "dorikithe chastavu"):
         return [
-            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "https://www.jiosaavn.com/song/katthula-toh/QABaehx5dlY",
-            "https://www.jiosaavn.com/song/thudilenidhi/JwkDRCZEZ14",
-            "https://www.jiosaavn.com/song/dabbunnoda/HS8BRjF9D2k",
-            "https://www.jiosaavn.com/song/champaraa/OFwuYRcIfkQ",
-            "https://www.jiosaavn.com/song/karma-dharma/OSYAfSBVdQo",
-            "https://www.jiosaavn.com/song/gundello/SREvYB9qZQM",
-            "Dorikithe Chastavu",
-            "Raktacharitra",
-            "Katthula Toh",
-            "Thudilenidhi"
+            "Dorikithe Chastavu Rakta Charitra",
+            "Rakta Charitra",
+            "Katthula Toh Karma Dharma Rakta Charitra",
+            "Gundello Dabbunoda Rakta Charitra"
         ]
     if "high beam" in q_low or "highbeam" in q_low:
         return [
-            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "Dorikithe Chastavu",
-            "Katthula Toh",
+            "Dorikithe Chastavu Rakta Charitra",
             "Hungry Cheetah OG",
             "Fear Song Devara",
             "Ayudha Pooja Devara",
@@ -1193,7 +1087,7 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    cache_key = f"search_v20::{clean_q.lower()}::p{page}"
+    cache_key = f"search_v19::{clean_q.lower()}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1220,15 +1114,14 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     English (Ed Sheeran, The Weeknd), and Hindi hits in parallel.
     """
     cat = category.lower().strip()
-    cache_key = f"cat_v20::{cat}::p{page}"
+    cache_key = f"cat_v19::{cat}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
 
     category_queries = {
         "home": [
-            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "Dorikithe Chastavu",
+            "Dorikithe Chastavu Rakta Charitra",
             "Hungry Cheetah OG",
             "Fear Song Devara",
             "Kissik Pushpa 2",
@@ -1242,12 +1135,8 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Arijit Singh"
         ],
         "highbeam": [
-            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "https://www.jiosaavn.com/song/katthula-toh/QABaehx5dlY",
-            "https://www.jiosaavn.com/song/thudilenidhi/JwkDRCZEZ14",
-            "https://www.jiosaavn.com/song/dabbunnoda/HS8BRjF9D2k",
-            "Dorikithe Chastavu",
-            "Raktacharitra",
+            "Dorikithe Chastavu Rakta Charitra",
+            "Rakta Charitra",
             "Hungry Cheetah OG",
             "Fear Song Devara",
             "Ayudha Pooja Devara",
@@ -1289,8 +1178,7 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Pushpa Pushpa Pushpa 2",
             "Daavudi Devara",
             "Fear Song Devara",
-            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "Dorikithe Chastavu",
+            "Dorikithe Chastavu Rakta Charitra",
             "Hungry Cheetah OG",
             "Daaku Maharaaj Thaman",
             "Boss Party Waltair Veerayya",
@@ -1370,8 +1258,7 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Dear Comrade Telugu"
         ],
         "workout": [
-            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "Dorikithe Chastavu",
+            "Dorikithe Chastavu Rakta Charitra",
             "Hungry Cheetah OG",
             "Salaar Telugu",
             "Vikram Anirudh",
@@ -4438,8 +4325,7 @@ APP_JS = r'''/* ================================================================
     { title: "Aarya - 2 (Original Motion...)", query: "Arya 2 Devi Sri Prasad Allu Arjun", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" },
     { title: "OG Telugu Full Album", query: "Hungry Cheetah OG Thaman Pawan Kalyan", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
     { title: "Telugu Item Songs 💃", cat: "itemsongs", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
-    { title: "Raktacharitra • Mass", query: "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "Dorikithe Chastavu", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
+    { title: "Raktacharitra • Mass", query: "Dorikithe Chastavu Rakta Charitra", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
     { title: "Feel good Love Songs in Telugu", query: "Hi Nanna Sita Ramam Geetha Govindam Sid Sriram", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg" },
     { title: "OM Chapter 1 • Karuppu", cat: "om", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" }
   ];
@@ -4479,8 +4365,7 @@ APP_JS = r'''/* ================================================================
     { type: "playlists", title: "High beam 🔥", sub: "Playlist • Mass & Elevation Hits", cat: "highbeam", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
     { type: "playlists", title: "Tollywood Sensational Item Songs 💃", sub: "Playlist • 20 Non-Stop Special Dance Hits", cat: "itemsongs", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
     { type: "albums", title: "Daaku Maharaaj", sub: "EP • Thaman S", query: "Daaku Maharaaj Thaman", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
-    { type: "albums", title: "Raktacharitra (Dorikithe Chastavu)", sub: "Album • Dharam-Sandeep, RGV", query: "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "Dorikithe Chastavu", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
+    { type: "albums", title: "Raktacharitra (Dorikithe Chastavu)", sub: "Album • Dharam-Sandeep, RGV", query: "Dorikithe Chastavu Rakta Charitra", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
     { type: "playlists", title: "Jailer 2 - All Songs [Telugu] ✨🔥", sub: "Playlist • Anirudh ✨🎧", query: "Jailer Telugu Anirudh Hukum Kaavaalaa", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
     { type: "albums", title: "Jailer 2 (Original Motion Picture Soundtrack)", sub: "Album • Anirudh Ravichander", query: "Anirudh Ravichander Jailer Vikram Leo Devara", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" },
     { type: "albums", title: "Veezha Veera (From \"OM Chapter 1: Udhiram\")", sub: "Single • Sai Abhyankkar", query: "Alaakaa Loova Senjudare Veezha Veera Sai Abhyankkar", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" },
