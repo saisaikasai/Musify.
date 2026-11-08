@@ -85,6 +85,9 @@ def init_db(db_path: str = DB_FILE) -> None:
                 position INTEGER NOT NULL,
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE INDEX IF NOT EXISTS idx_playlist_songs_pid ON playlist_songs (playlist_id, position);
+            CREATE INDEX IF NOT EXISTS idx_queue_songs_pos ON queue_songs (position);
         """)
     conn.close()
 
@@ -339,7 +342,7 @@ REQ_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Referer": "https://www.jiosaavn.com/",
-    "Cookie": "L=telugu%2Ctamil%2Chindi%2Cenglish"
+    "Cookie": "L=telugu%2Chindi%2Cenglish%2Ctamil%2Ckannada%2Cmalayalam%2Cpunjabi"
 }
 
 SAAVN_MIRRORS = [
@@ -790,21 +793,33 @@ def get_lyrics(song_id: str, title: str = "", artist: str = "") -> Optional[str]
     return payload.get("lyrics")
 
 
-def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 40) -> Any:
-    """
-    Fetches full-length songs directly from JioSaavn:
-    1. JioSaavn v4 search.getResults (decrypts more_info.encrypted_media_url directly in 1 fast call!)
-    2. JioSaavn v1 search.getResults + autocomplete.get + batch song.getDetails fallback
-    """
-    clean_q = query.strip()
-    if clean_q.startswith("http") and "saavn.com" in clean_q:
-        sid = get_song_id(clean_q)
-        return get_song(sid, lyrics) if sid else []
+import time as _time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    direct_songs: List[Dict[str, Any]] = []
+# Fast in-memory TTL cache (10 minutes) for instant category/singer/mood switching
+_SEARCH_CACHE: Dict[str, Any] = {}
+_CACHE_TTL_SEC = 600
+
+
+def _cache_get(key: str) -> Optional[List[Dict[str, Any]]]:
+    entry = _SEARCH_CACHE.get(key)
+    if entry and (_time.time() - entry[0]) < _CACHE_TTL_SEC:
+        return entry[1]
+    return None
+
+
+def _cache_set(key: str, val: List[Dict[str, Any]]) -> None:
+    if not val:
+        return
+    if len(_SEARCH_CACHE) > 250:
+        _SEARCH_CACHE.clear()
+    _SEARCH_CACHE[key] = (_time.time(), val)
+
+
+def _search_v4_songs(clean_q: str, page: int = 1, limit: int = 40, lyrics: bool = False) -> List[Dict[str, Any]]:
+    """Calls JioSaavn v4 search.getResults and decrypts full-length streams directly."""
+    out: List[Dict[str, Any]] = []
     fallback_ids: List[str] = []
-
-    # 1. Fast v4 search.getResults (includes encrypted_media_url directly in each result's more_info!)
     try:
         v4_url = f"{search_results_base_url}&api_version=4&ctx=web6dot0&n={limit}&p={page}&q={urllib.parse.quote(clean_q)}"
         v4_resp = requests.get(v4_url, headers=REQ_HEADERS, timeout=6)
@@ -817,35 +832,84 @@ def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, pag
                 if more.get("encrypted_media_url") or item.get("encrypted_media_url") or more.get("vlink"):
                     formatted = format_song(item, lyrics=lyrics)
                     if formatted.get("media_url"):
-                        direct_songs.append(formatted)
+                        out.append(formatted)
                 elif item.get("id"):
                     fallback_ids.append(str(item["id"]))
     except Exception as e:
         logger.debug(f"v4 search.getResults error: {e}")
 
-    if direct_songs:
-        return _deduplicate_songs(direct_songs)
+    if fallback_ids and not out:
+        out.extend(get_songs_batch(fallback_ids, lyrics=lyrics))
+    return out
 
-    # 2. If v4 didn't have inline encrypted_media_url, use autocomplete.get + batch song.getDetails
-    if page == 1 and len(fallback_ids) < 15:
+
+def _search_albums_and_playlists(clean_q: str, lyrics: bool = False) -> List[Dict[str, Any]]:
+    """
+    Checks JioSaavn autocomplete for matching Movie Albums and Singer/Mood Playlists,
+    and extracts ALL songs inside the top matching albums and playlists so no movie/singer track is missed!
+    """
+    extra_songs: List[Dict[str, Any]] = []
+    try:
+        ac_url = search_base_url + urllib.parse.quote(clean_q)
+        ac_resp = requests.get(ac_url, headers=REQ_HEADERS, timeout=5)
+        ac_data = _parse_saavn_json(ac_resp.text)
+        if not isinstance(ac_data, dict):
+            return []
+
+        # 1. Extract all songs from top 2 matching Movie Albums
+        albums_data = (ac_data.get("albums") or {}).get("data") or []
+        for alb in albums_data[:2]:
+            if isinstance(alb, dict) and alb.get("id"):
+                alb_obj = get_album(str(alb["id"]), lyrics=lyrics)
+                if alb_obj and isinstance(alb_obj.get("songs"), list):
+                    extra_songs.extend(alb_obj["songs"])
+
+        # 2. Extract songs from top matching Singer / Mood Featured Playlist
+        playlists_data = (ac_data.get("playlists") or {}).get("data") or []
+        for pl in playlists_data[:1]:
+            if isinstance(pl, dict) and pl.get("id"):
+                pl_obj = get_playlist(str(pl["id"]), lyrics=lyrics)
+                if pl_obj and isinstance(pl_obj.get("songs"), list):
+                    extra_songs.extend(pl_obj["songs"][:35])
+    except Exception as e:
+        logger.debug(f"Album/Playlist deep extraction skipped: {e}")
+    return extra_songs
+
+
+def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 40) -> Any:
+    """
+    Deep JioSaavn search combining:
+    1. Direct v4 song search (40 songs per page)
+    2. Full Movie Album & Featured Singer/Mood Playlist song extraction (on page 1)
+    3. Multi-page offset (fetches 2 JioSaavn pages at once so every page returns up to 60+ songs!)
+    """
+    clean_q = query.strip()
+    if clean_q.startswith("http") and "saavn.com" in clean_q:
+        sid = get_song_id(clean_q)
+        return get_song(sid, lyrics) if sid else []
+
+    if not songdata:
         try:
-            ac_url = search_base_url + urllib.parse.quote(clean_q)
-            ac_resp = requests.get(ac_url, headers=REQ_HEADERS, timeout=6)
-            ac_data = _parse_saavn_json(ac_resp.text)
-            song_response = ac_data.get("songs", {}).get("data", [])
-            if not songdata:
-                return song_response
-            for s in song_response:
-                sid = str(s.get("id", ""))
-                if sid and sid not in fallback_ids:
-                    fallback_ids.append(sid)
-        except Exception as e:
-            logger.debug(f"autocomplete.get error: {e}")
+            ac_resp = requests.get(search_base_url + urllib.parse.quote(clean_q), headers=REQ_HEADERS, timeout=5)
+            return _parse_saavn_json(ac_resp.text).get("songs", {}).get("data", [])
+        except Exception:
+            return []
 
-    if fallback_ids:
-        songs = get_songs_batch(fallback_ids, lyrics=lyrics)
-        if songs:
-            return _deduplicate_songs(songs)
+    saavn_page_a = (page - 1) * 2 + 1
+    saavn_page_b = saavn_page_a + 1
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        fut_a = pool.submit(_search_v4_songs, clean_q, saavn_page_a, limit, lyrics)
+        fut_b = pool.submit(_search_v4_songs, clean_q, saavn_page_b, limit, lyrics)
+        fut_alb = pool.submit(_search_albums_and_playlists, clean_q, lyrics) if page == 1 else None
+
+        songs_a = fut_a.result() or []
+        songs_b = fut_b.result() or []
+        songs_alb = (fut_alb.result() or []) if fut_alb else []
+
+    combined = songs_alb + songs_a + songs_b
+    if combined:
+        return _deduplicate_songs(combined)
 
     return []
 
@@ -910,26 +974,22 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 40) -> List[Di
     return []
 
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-
 def _normalize_user_query(q: str) -> List[str]:
-    """Expands user searches (including 'ed shareen', 'weeknd', 'om chapter -1', 'dhanush') into rich JioSaavn queries."""
+    """Expands artist, movie, and mood searches into comprehensive JioSaavn queries."""
     q_clean = re.sub(r"\s+", " ", q.strip())
     q_low = q_clean.lower()
 
-    # Handle common spelling variations like "ed shareen" / "ed sheeran" / "weeknd" / "weekend"
     if "shareen" in q_low or "sheeran" in q_low:
         return [
-            "Ed Sheeran Shape of You Perfect",
-            "Ed Sheeran Bad Habits Photograph Thinking Out Loud",
-            "Ed Sheeran Sapphire Azizam Shivers"
+            "Ed Sheeran",
+            "Ed Sheeran Shape of You Perfect Bad Habits Photograph",
+            "Ed Sheeran Thinking Out Loud Sapphire Azizam Shivers Galway Girl"
         ]
     if "weeknd" in q_low or "weekend" in q_low:
         return [
-            "The Weeknd Blinding Lights Starboy",
-            "The Weeknd Die For You Save Your Tears One Of The Girls",
-            "The Weeknd Timeless Popular Creepin Hills"
+            "The Weeknd",
+            "The Weeknd Blinding Lights Starboy Die For You Save Your Tears",
+            "The Weeknd One Of The Girls Timeless Popular Creepin Hills Call Out My Name"
         ]
     if "om" in q_low and ("chapter" in q_low or "1" in q_low or "udhiram" in q_low or "dhanush" in q_low):
         return [
@@ -943,9 +1003,9 @@ def _normalize_user_query(q: str) -> List[str]:
         ]
     if "dhanush" in q_low:
         return [
+            "Dhanush",
             "OM Chapter 1 Udhiram",
-            "Alaakaa Loova Veera Veera Senjudare",
-            "Dhanush Telugu Songs",
+            "Dhanush Telugu Songs 3 Raghuvaran B Tech Sir Maari",
             "Tere Ishk Mein Idli Kadai Kuberaa Raayan Dhanush"
         ]
 
@@ -957,8 +1017,7 @@ def _normalize_user_query(q: str) -> List[str]:
     return expanded
 
 
-def _fetch_single_query(sub_q: str, page: int = 1, limit: int = 30) -> List[Dict[str, Any]]:
-    """Helper to fetch full-length JioSaavn tracks for a single query string."""
+def _fetch_single_query(sub_q: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     saavn_songs = search_for_song(sub_q, lyrics=False, songdata=True, page=page, limit=limit)
     if isinstance(saavn_songs, list) and saavn_songs:
@@ -966,15 +1025,14 @@ def _fetch_single_query(sub_q: str, page: int = 1, limit: int = 30) -> List[Dict
     elif isinstance(saavn_songs, dict) and saavn_songs.get("media_url"):
         out.append(saavn_songs)
 
-    if len(out) < 8:
+    if len(out) < 10:
         mirror_songs = _search_saavn_mirrors(sub_q, page=page, limit=limit)
         if mirror_songs:
             out.extend(mirror_songs)
     return out
 
 
-def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: int = 25) -> List[Dict[str, Any]]:
-    """Executes multiple JioSaavn queries concurrently in parallel threads while preserving query order."""
+def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: int = 35) -> List[Dict[str, Any]]:
     if not queries:
         return []
     ordered_buckets: List[List[Dict[str, Any]]] = [[] for _ in queries]
@@ -997,38 +1055,48 @@ def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: 
 
 
 def search_songs(query: str, page: int = 1, limit: int = 40) -> List[Dict[str, Any]]:
-    """
-    Searches ONLY full-length JioSaavn streams across expanded queries in parallel.
-    Never uses 30-second previews!
-    """
     clean_q = query.strip()
     if not clean_q:
         return get_category_songs("home", page=page)
+
+    cache_key = f"search::{clean_q.lower()}::p{page}"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
 
     queries_to_run = _normalize_user_query(clean_q)
     if len(queries_to_run) == 1:
         res = _fetch_single_query(queries_to_run[0], page=page, limit=limit)
         deduped = _deduplicate_songs(res)
-        return deduped if deduped else FALLBACK_CATALOG
+        if deduped:
+            _cache_set(cache_key, deduped)
+            return deduped
+        return FALLBACK_CATALOG
 
-    deduped = _parallel_fetch_queries(queries_to_run, page=page, per_query_limit=25)
-    return deduped if deduped else FALLBACK_CATALOG
+    deduped = _parallel_fetch_queries(queries_to_run, page=page, per_query_limit=30)
+    if deduped:
+        _cache_set(cache_key, deduped)
+        return deduped
+    return FALLBACK_CATALOG
 
 
 def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     """
-    Fetches rich, full-length song catalogs in parallel:
-    - 'home' / 'all': Telugu Blockbusters first + Ed Sheeran & The Weeknd English Hits + New Hindi Hits
-    - 'telugu': All New & Trending Telugu Movie Songs (Pushpa 2, Devara, OM Chapter 1, Kalki, Guntur Kaaram, Game Changer)
-    - 'english': Ed Sheeran, The Weeknd, Dua Lipa, Taylor Swift, Justin Bieber, Coldplay, Alan Walker
-    - 'hindi': New & Popular Bollywood Hits (Arijit Singh, Stree 2, Bhool Bhulaiyaa 3, Animal, Jawan, Brahmastra)
+    Comprehensive Mood, Language & Singer Catalog:
+    Supports 'home', 'telugu', 'om', 'english', 'hindi', 'punjabi',
+    plus all Moods ('love', 'sad', 'mass', 'chill', 'workout', 'drive', 'party', 'evergreen', 'devotional').
     """
     cat = category.lower().strip()
+    cache_key = f"cat::{cat}::p{page}"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+
     category_queries = {
         "home": [
             "OM Chapter 1 Udhiram Alaakaa Loova Veera Veera",
-            "Latest Telugu Hit Songs Pushpa 2 Devara Guntur Kaaram Kalki",
-            "Telugu Top Songs Sid Sriram Thaman DSP Anirudh",
+            "Latest Telugu Hit Songs Pushpa 2 Devara Guntur Kaaram Kalki Game Changer",
+            "Telugu Top Songs Sid Sriram Thaman DSP Anirudh Mickey J Meyer",
             "Ed Sheeran Shape of You Perfect Bad Habits Photograph",
             "The Weeknd Blinding Lights Starboy Die For You Save Your Tears",
             "Latest Hindi Hit Songs Arijit Singh Stree 2 Animal Jawan Kesariya"
@@ -1037,9 +1105,9 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Latest Telugu Hit Songs Pushpa 2 Devara Kalki Game Changer",
             "OM Chapter 1 Udhiram Alaakaa Loova Veera Veera",
             "Telugu Top Hits Sid Sriram Thaman DSP Anirudh",
-            "Guntur Kaaram Hi Nanna Salaar Hanuman Telugu Songs",
-            "Mickey J Meyer Sirivennela Feel Good Telugu Songs",
-            "Allu Arjun Prabhas Mahesh Babu Nani Jr NTR Telugu Hits"
+            "Hi Nanna Salaar Hanuman Tillu Square Lucky Baskhar Amaran Telugu",
+            "Orange Arya 2 Geetha Govindam Sita Ramam Ala Vaikunthapurramuloo",
+            "Allu Arjun Prabhas Mahesh Babu Nani Jr NTR Pawan Kalyan Ram Charan"
         ],
         "om": [
             "OM Chapter 1 Udhiram",
@@ -1047,7 +1115,7 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Veera Veera OM Chapter 1",
             "Veezha Veera OM Chapter 1",
             "Senjudare OM Chapter 1",
-            "Dhanush Telugu Tamil Songs Tere Ishk Mein Idli Kadai Kuberaa"
+            "Dhanush Telugu Tamil Songs 3 Raghuvaran Tere Ishk Mein Idli Kadai Kuberaa"
         ],
         "english": [
             "Ed Sheeran Shape of You Perfect Bad Habits Thinking Out Loud Photograph",
@@ -1055,15 +1123,68 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "The Weeknd One Of The Girls Timeless Creepin Popular",
             "Dua Lipa Levitating Taylor Swift Cruel Summer Sabrina Carpenter Espresso",
             "Coldplay Hymn For The Weekend Alan Walker Faded Justin Bieber Stay",
-            "Trending English Pop Songs Global Top Hits"
+            "Bruno Mars Billie Eilish Imagine Dragons Believer Eminem Lose Yourself"
         ],
         "hindi": [
             "Latest Hindi Songs Aaj Ki Raat Stree 2 Bhool Bhulaiyaa 3",
             "Arijit Singh Top Hindi Songs Kesariya Chaleya Satranga Apna Bana Le",
             "Animal Hindi Songs Arjan Vailly Pehle Bhi Main Abrars Entry",
             "Pritam Vishal Shekhar Sachin Jigar Bollywood Top Hits",
-            "Tum Hi Ho Kabir Singh Shershaah Aashiqui 2 Hindi Hits",
-            "Trending Bollywood Songs New Hindi Releases"
+            "Tum Hi Ho Kabir Singh Shershaah Aashiqui 2 Rockstar Hindi",
+            "Atif Aslam KK Sonu Nigam Shreya Ghoshal Jubin Nautiyal Hindi Hits"
+        ],
+        "love": [
+            "Telugu Romantic Love Songs Sid Sriram Hesham Abdul Wahab",
+            "Hi Nanna Sita Ramam Geetha Govindam Feel Good Telugu Love Songs",
+            "Arijit Singh Romantic Hindi Songs Tum Hi Ho Kesariya Apna Bana Le",
+            "Ed Sheeran Perfect Thinking Out Loud Taylor Swift Lover"
+        ],
+        "sad": [
+            "Telugu Heartbreak Love Failure Sad Songs Orange Arya 2 3",
+            "Sid Sriram Arijit Singh Emotional Sad Songs Telugu Hindi",
+            "Po Ve Po Kannuladha Oosupodu Adiga Adiga Telugu Sad Hits",
+            "Channa Mereya Agar Tum Saath Ho Bekhayali Tujhe Bhula Diya"
+        ],
+        "mass": [
+            "Telugu Mass Beats Kuthu Songs DSP Thaman Anirudh",
+            "Kurchi Madathapetti Oo Antava Naatu Naatu Daavudi Boss Party",
+            "Jailer Hukum Vikram Pathala Pathala Leo Naa Ready Mass Songs",
+            "Pushpa 2 Devara Fear Song Salaar Mass Telugu Songs"
+        ],
+        "chill": [
+            "Feel Good Chill Telugu Melodies Mickey J Meyer Vivek Sagar",
+            "Sirivennela Maestro Sammohanam Pellichoopulu Telugu Chill Songs",
+            "LoFi Chill Hindi Telugu Relaxing Acoustic Songs",
+            "The Weeknd Save Your Tears Coldplay Post Malone Circles"
+        ],
+        "workout": [
+            "Workout Gym Motivation Songs Telugu Hindi English",
+            "Beast Mode Anirudh KGF Salaar Vikram RRR Workout BGM Songs",
+            "Arjan Vailly Animal Kar Har Maidaan Fateh Zinda Sultan",
+            "Eminem Till I Collapse Imagine Dragons Believer The Weeknd Starboy"
+        ],
+        "drive": [
+            "Late Night Drive Telugu Melodies Sid Sriram AR Rahman",
+            "Ye Maaya Chesave Gharshana Awara Oohalu Gusagusalade Telugu",
+            "Night Drive Hindi SongsKK Pritam Mohit Chauhan",
+            "The Weeknd Blinding Lights Nightcall Midnight City"
+        ],
+        "party": [
+            "Telugu Party Dance DJ Songs Thaman DSP",
+            "Bollywood Party Songs Badshah Diljit Dosanjh Aaj Ki Raat Tauba Tauba",
+            "Punjabi Party Hits AP Dhillon Brown Munde Excuses Karan Aujla",
+            "Dua Lipa Don't Start Now Usher Pitbull Calvin Harris Party Hits"
+        ],
+        "evergreen": [
+            "SP Balasubrahmanyam Chitra Telugu Evergreen Melodies 90s 2000s",
+            "Mani Sharma Ilaiyaraaja Keeravani AR Rahman Classic Telugu Hits",
+            "Koti RP Patnaik Chakri Devi Sri Prasad 2000s Telugu Hit Songs",
+            "90s 2000s Evergreen Bollywood Hindi Songs KK Sonu Nigam Shaan"
+        ],
+        "devotional": [
+            "Telugu Devotional Songs Annamayya Keerthanalu SPB",
+            "Shree Hanuman Chalisa Lord Shiva Tirumala Balaji Devotional Songs",
+            "Namo Namo Kedarnath Deva Deva Brahmastra Har Har Shambhu"
         ],
         "melodies": [
             "Telugu Feel Good Love Songs Sid Sriram",
@@ -1084,19 +1205,21 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
         ]
     }
 
-    queries = category_queries.get(cat, [f"Telugu {cat} songs", f"{cat} top songs"])
+    queries = category_queries.get(cat, [f"{cat} Telugu songs", f"{cat} top hit songs"])
 
-    # On page 1, run all queries for the selected category in parallel so the user gets 60-90+ full songs immediately!
     if page == 1:
-        combined = _parallel_fetch_queries(queries, page=1, per_query_limit=20)
+        combined = _parallel_fetch_queries(queries, page=1, per_query_limit=25)
         if combined:
+            _cache_set(cache_key, combined)
             return combined
 
-    # On subsequent pages ("Load More Songs"), cycle through the category queries with higher page numbers
     selected_q = queries[(page - 1) % len(queries)]
     sub_page = ((page - 1) // len(queries)) + 1
-    results = _parallel_fetch_queries([selected_q, queries[page % len(queries)]], page=sub_page, per_query_limit=30)
-    return results if results else FALLBACK_CATALOG
+    results = _parallel_fetch_queries([selected_q, queries[page % len(queries)]], page=sub_page, per_query_limit=35)
+    if results:
+        _cache_set(cache_key, results)
+        return results
+    return FALLBACK_CATALOG
 
 
 # =====================================================================
@@ -1142,7 +1265,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=15">
+  <link rel="stylesheet" href="/static/css/style.css?v=16">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1206,8 +1329,15 @@ INDEX_HTML = r'''<!DOCTYPE html>
           <button class="pill-btn" data-category="om">OM • Dhanush</button>
           <button class="pill-btn" data-category="english">English • Weeknd & Ed</button>
           <button class="pill-btn" data-category="hindi">Hindi Hits</button>
-          <button class="pill-btn" data-category="melodies">Telugu Melodies</button>
-          <button class="pill-btn" data-category="trending">Trending</button>
+          <button class="pill-btn" data-category="love">💕 Love</button>
+          <button class="pill-btn" data-category="sad">💔 Heartbreak</button>
+          <button class="pill-btn" data-category="mass">🔥 Mass Beats</button>
+          <button class="pill-btn" data-category="chill">😌 Chill & Feel Good</button>
+          <button class="pill-btn" data-category="workout">💪 Workout</button>
+          <button class="pill-btn" data-category="drive">🚗 Night Drive</button>
+          <button class="pill-btn" data-category="party">🎉 Party DJ</button>
+          <button class="pill-btn" data-category="evergreen">🌟 90s/2000s Evergreen</button>
+          <button class="pill-btn" data-category="devotional">🙏 Devotional</button>
           <button class="pill-btn" data-category="punjabi">Punjabi</button>
         </div>
       </header>
@@ -1224,10 +1354,22 @@ INDEX_HTML = r'''<!DOCTYPE html>
       <!-- Scrollable Home & Discovery Content -->
       <section class="content-scroll" id="contentScroll">
 
-        <!-- Home Exclusive Sections (2x4 Grid + Telugu, English & Hindi Carousels) -->
+        <!-- Home Exclusive Sections (2x4 Grid + All Singers Hub + All Moods Hub + Carousels) -->
         <div id="homeHeroSections">
           <!-- 8 Compact 2-Column Rectangular Tiles -->
           <div id="quickTilesGrid" class="quick-tiles-grid"></div>
+
+          <!-- Popular Singers Circular Hub (30+ Telugu, Hindi, Tamil & Global Artists) -->
+          <div class="home-section">
+            <h2 class="section-title">Popular Singers • All Songs</h2>
+            <div id="singersRow" class="singers-scroll-row"></div>
+          </div>
+
+          <!-- All Moods & Vibes Grid -->
+          <div class="home-section">
+            <h2 class="section-title">Listen by Mood & Vibe</h2>
+            <div id="moodsGrid" class="moods-grid"></div>
+          </div>
 
           <!-- Horizontal Carousel 1: New Telugu & OM Chapter 1 Hits -->
           <div class="home-section">
@@ -1581,20 +1723,20 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/static/js/player.js?v=15"></script>
-  <script src="/static/js/app.js?v=15"></script>
+  <script src="/static/js/player.js?v=16"></script>
+  <script src="/static/js/app.js?v=16"></script>
   <script>
     // Force-clear any old desktop cached assets from previous service workers
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-dl-backguard-v15") caches.delete(k);
+          if (k !== "musify-allsingers-moods-v16") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=15").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=16").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -1968,8 +2110,91 @@ html, body {
   padding-bottom: 4px;
 }
 
-.horiz-scroll-row::-webkit-scrollbar {
+.horiz-scroll-row::-webkit-scrollbar, .singers-scroll-row::-webkit-scrollbar {
   display: none;
+}
+
+/* Popular Singers Circular Avatar Row */
+.singers-scroll-row {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 6px;
+}
+
+.singer-circle-card {
+  width: 96px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.singer-avatar-ring {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  padding: 2.5px;
+  background: linear-gradient(135deg, var(--accent), #3b82f6);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.55);
+  transition: transform 0.2s ease;
+}
+
+.singer-circle-card:hover .singer-avatar-ring {
+  transform: scale(1.06);
+}
+
+.singer-avatar-ring img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  background-color: #242424;
+}
+
+.singer-name-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Listen by Mood & Vibe Grid */
+.moods-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mood-tile {
+  height: 64px;
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: transform 0.18s ease;
+}
+
+.mood-tile:hover {
+  transform: scale(1.03);
+}
+
+.mood-emoji {
+  font-size: 18px;
 }
 
 .horiz-card {
@@ -3955,15 +4180,71 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
   let activeSearchQuery = "";
 
   const TITLES = {
-    home: ["All Popular & Trending Songs", "Full-length Telugu, Ed Sheeran, The Weeknd & Hindi hits • Back-to-back play"],
+    home: ["All Popular & Trending Songs", "Full-length Telugu, Ed Sheeran, The Weeknd & Hindi hits • Auto-loads as you scroll"],
     telugu: ["New & Trending Telugu Blockbusters", "Pushpa 2, Devara, OM Chapter 1, Kalki, Guntur Kaaram, Sid Sriram & Thaman"],
     om: ["OM Chapter 1: Udhiram • Dhanush", "Alaakaa Loova, Veera Veera, Veezha Veera, Senjudare & Dhanush hits"],
     english: ["Ed Sheeran, The Weeknd & English Hits", "Blinding Lights, Shape of You, Starboy, Perfect, Die For You & global pop"],
     hindi: ["New & Trending Hindi Blockbusters", "Arijit Singh, Stree 2, Bhool Bhulaiyaa 3, Animal, Jawan & Bollywood hits"],
+    love: ["💕 Romantic & Love Melodies", "Heart-touching Telugu, Hindi & English love songs"],
+    sad: ["💔 Heartbreak & Love Failure Songs", "Soulful emotional tracks for late-night listening"],
+    mass: ["🔥 High-Voltage Mass & Kuthu Beats", "Theatre mass anthems from DSP, Thaman & Anirudh"],
+    chill: ["😌 Feel Good & Chill Vibes", "Relaxing melodies, acoustic & lo-fi tracks"],
+    workout: ["💪 Gym & Workout Beast Mode", "High-energy motivation & adrenaline tracks"],
+    drive: ["🚗 Late Night Drive Melodies", "Breezy road-trip songs across Telugu, Hindi & English"],
+    party: ["🎉 Party & DJ Dance Floor", "Non-stop Telugu, Bollywood, Punjabi & Pop club hits"],
+    evergreen: ["🌟 90s & 2000s Evergreen Classics", "SPB, Chitra, Mani Sharma, Ilaiyaraaja, AR Rahman & KK classics"],
+    devotional: ["🙏 Devotional & Peaceful", "Spiritual & peaceful morning songs"],
     melodies: ["Feel Good Telugu Melodies", "Sirivennela, Maestro, Geetha Govindam & love hits"],
     trending: ["Top Viral & Trending Songs", "Telugu, English & Hindi chartbusters"],
     punjabi: ["Punjabi Party Anthems", "AP Dhillon, Diljit Dosanjh & Karan Aujla"]
   };
+
+  const ALL_SINGERS = [
+    { name: "Sid Sriram", query: "Sid Sriram Telugu Hits", img: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80" },
+    { name: "Anirudh", query: "Anirudh Ravichander Telugu Tamil Hits", img: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=200&auto=format&fit=crop&q=80" },
+    { name: "Devi Sri Prasad", query: "Devi Sri Prasad Telugu Hits Pushpa Arya", img: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=200&auto=format&fit=crop&q=80" },
+    { name: "Thaman S", query: "Thaman S Telugu Hits Ala Vaikunthapurramuloo Guntur Kaaram", img: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=200&auto=format&fit=crop&q=80" },
+    { name: "Arijit Singh", query: "Arijit Singh All Hit Songs", img: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=200&auto=format&fit=crop&q=80" },
+    { name: "The Weeknd", query: "The Weeknd", img: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=200&auto=format&fit=crop&q=80" },
+    { name: "Ed Sheeran", query: "Ed Sheeran", img: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=200&auto=format&fit=crop&q=80" },
+    { name: "Dhanush", query: "Dhanush", img: "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=200&auto=format&fit=crop&q=80" },
+    { name: "Sai Abhyankkar", query: "Sai Abhyankkar OM Chapter 1 Katchi Sera Aasa Kooda", img: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=200&auto=format&fit=crop&q=80" },
+    { name: "S. P. Balasubrahmanyam", query: "SP Balasubrahmanyam Telugu Hits", img: "https://images.unsplash.com/photo-1465847899084-d164df4dedc6?w=200&auto=format&fit=crop&q=80" },
+    { name: "Mickey J. Meyer", query: "Mickey J Meyer Telugu Songs", img: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=200&auto=format&fit=crop&q=80" },
+    { name: "A. R. Rahman", query: "AR Rahman Telugu Tamil Hindi Hits", img: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80" },
+    { name: "Hesham Abdul Wahab", query: "Hesham Abdul Wahab Hi Nanna Kushi Telugu Songs", img: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=200&auto=format&fit=crop&q=80" },
+    { name: "Shreya Ghoshal", query: "Shreya Ghoshal Telugu Hindi Hits", img: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=200&auto=format&fit=crop&q=80" },
+    { name: "Anurag Kulkarni", query: "Anurag Kulkarni Telugu Hit Songs", img: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=200&auto=format&fit=crop&q=80" },
+    { name: "Ram Miriyala", query: "Ram Miriyala Telugu Songs", img: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=200&auto=format&fit=crop&q=80" },
+    { name: "K. S. Chithra", query: "KS Chithra Telugu Melody Songs", img: "https://images.unsplash.com/photo-1465847899084-d164df4dedc6?w=200&auto=format&fit=crop&q=80" },
+    { name: "Ilaiyaraaja", query: "Ilaiyaraaja Telugu Evergreen Songs", img: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=200&auto=format&fit=crop&q=80" },
+    { name: "M. M. Keeravani", query: "MM Keeravani RRR Baahubali Telugu Songs", img: "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=200&auto=format&fit=crop&q=80" },
+    { name: "Mani Sharma", query: "Mani Sharma Telugu Hit Songs", img: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=200&auto=format&fit=crop&q=80" },
+    { name: "Karthik", query: "Singer Karthik Telugu Hit Songs", img: "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=200&auto=format&fit=crop&q=80" },
+    { name: "Chinmayi", query: "Chinmayi Sripada Telugu Songs", img: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=200&auto=format&fit=crop&q=80" },
+    { name: "Pritam", query: "Pritam Bollywood Hit Songs", img: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=200&auto=format&fit=crop&q=80" },
+    { name: "Atif Aslam", query: "Atif Aslam Hit Songs", img: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=200&auto=format&fit=crop&q=80" },
+    { name: "KK", query: "KK Singer Best Hindi Telugu Songs", img: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80" },
+    { name: "Taylor Swift", query: "Taylor Swift Cruel Summer Lover Blank Space", img: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=200&auto=format&fit=crop&q=80" },
+    { name: "Dua Lipa", query: "Dua Lipa Levitating Houdini Don't Start Now", img: "https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=200&auto=format&fit=crop&q=80" },
+    { name: "Alan Walker", query: "Alan Walker Faded Alone On My Way", img: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=200&auto=format&fit=crop&q=80" },
+    { name: "Justin Bieber", query: "Justin Bieber Stay Peaches Baby Sorry", img: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=200&auto=format&fit=crop&q=80" },
+    { name: "Coldplay", query: "Coldplay Hymn For The Weekend Yellow Sky Full Of Stars", img: "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=200&auto=format&fit=crop&q=80" },
+    { name: "AP Dhillon", query: "AP Dhillon Excuses Brown Munde With You", img: "https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=200&auto=format&fit=crop&q=80" },
+    { name: "Diljit Dosanjh", query: "Diljit Dosanjh Lover Born To Shine Kinni Kinni", img: "https://images.unsplash.com/photo-1445985543470-41fdd6ce388d?w=200&auto=format&fit=crop&q=80" }
+  ];
+
+  const ALL_MOODS = [
+    { cat: "love", emoji: "💕", label: "Love & Romantic", bg: "linear-gradient(135deg, #e11d48, #881337)" },
+    { cat: "sad", emoji: "💔", label: "Heartbreak & Sad", bg: "linear-gradient(135deg, #3b82f6, #1e3a8a)" },
+    { cat: "mass", emoji: "🔥", label: "Mass & Dance", bg: "linear-gradient(135deg, #ea580c, #7c2d12)" },
+    { cat: "chill", emoji: "😌", label: "Chill & Feel Good", bg: "linear-gradient(135deg, #0d9488, #115e59)" },
+    { cat: "workout", emoji: "💪", label: "Gym & Workout", bg: "linear-gradient(135deg, #dc2626, #450a0a)" },
+    { cat: "drive", emoji: "🚗", label: "Night Drive", bg: "linear-gradient(135deg, #7c3aed, #3b0764)" },
+    { cat: "party", emoji: "🎉", label: "Party & DJ Club", bg: "linear-gradient(135deg, #db2777, #500724)" },
+    { cat: "evergreen", emoji: "🌟", label: "90s/2000s Classics", bg: "linear-gradient(135deg, #d97706, #451a03)" },
+    { cat: "devotional", emoji: "🙏", label: "Devotional", bg: "linear-gradient(135deg, #059669, #064e3b)" }
+  ];
 
   function getLikedSongs() {
     try { return JSON.parse(localStorage.getItem("musify_liked_songs") || "[]"); }
@@ -4079,6 +4360,24 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
         </div>`).join("");
     }
 
+    if ($("singersRow") && !$("singersRow").innerHTML) {
+      $("singersRow").innerHTML = ALL_SINGERS.map((sg) => `
+        <div class="singer-circle-card" data-singer-q="${esc(sg.query)}" data-singer-name="${esc(sg.name)}">
+          <div class="singer-avatar-ring">
+            <img src="${esc(sg.img)}" alt="${esc(sg.name)}" loading="lazy">
+          </div>
+          <div class="singer-name-label">${esc(sg.name)}</div>
+        </div>`).join("");
+    }
+
+    if ($("moodsGrid") && !$("moodsGrid").innerHTML) {
+      $("moodsGrid").innerHTML = ALL_MOODS.map((m) => `
+        <div class="mood-tile" data-mood-cat="${esc(m.cat)}" style="background:${m.bg}">
+          <span class="mood-emoji">${m.emoji}</span>
+          <span>${esc(m.label)}</span>
+        </div>`).join("");
+    }
+
     // Separate English (Weeknd / Ed Sheeran), Hindi, and Telugu slices for the 3 carousels
     const englishIndices = [];
     const hindiIndices = [];
@@ -4143,6 +4442,19 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
   }
 
   $("homeHeroSections").addEventListener("click", (e) => {
+    const singerEl = e.target.closest("[data-singer-q]");
+    if (singerEl) {
+      const q = singerEl.getAttribute("data-singer-q");
+      const name = singerEl.getAttribute("data-singer-name");
+      $("query").value = name;
+      runSearch(q);
+      return;
+    }
+    const moodEl = e.target.closest("[data-mood-cat]");
+    if (moodEl) {
+      loadCategory(moodEl.getAttribute("data-mood-cat"));
+      return;
+    }
     const el = e.target.closest("[data-hero-i]");
     if (!el) return;
     const idx = parseInt(el.dataset.heroI, 10);
@@ -4150,6 +4462,26 @@ APP_JS = r'''/* Musify Spotify Mobile & Desktop Controller */
       window.Player.playSongs(currentSongs, idx, true);
     }
   });
+
+  // Automatic Infinite Scroll: Loads next page of songs automatically when scrolling near bottom!
+  let isAutoLoadingMore = false;
+  window.loadMoreInBackground = function () {
+    if (!isAutoLoadingMore && !openPlaylistId) {
+      isAutoLoadingMore = true;
+      loadMoreSongs().finally(() => { isAutoLoadingMore = false; });
+    }
+  };
+
+  if ($("contentScroll")) {
+    $("contentScroll").addEventListener("scroll", () => {
+      if (isAutoLoadingMore || openPlaylistId) return;
+      const sc = $("contentScroll");
+      if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 420) {
+        isAutoLoadingMore = true;
+        loadMoreSongs().finally(() => { isAutoLoadingMore = false; });
+      }
+    }, { passive: true });
+  }
 
   function normalizeSongKey(s) {
     const raw = String((s && (s.title || s.song)) || "").toLowerCase();
@@ -4570,7 +4902,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-dl-backguard-v15";
+SW_JS = r'''const CACHE = "musify-allsingers-moods-v16";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
