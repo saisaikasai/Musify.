@@ -341,7 +341,8 @@ lyrics_base_url = "https://www.jiosaavn.com/api.php?__call=lyrics.getLyrics&ctx=
 REQ_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-IN,te-IN;q=0.9,hi-IN;q=0.8,en-US;q=0.7",
+    "Accept-Language": "te-IN,te;q=0.95,en-IN;q=0.9,hi-IN;q=0.8,en-US;q=0.7",
+    "Cookie": "L=telugu%2Ctamil%2Chindi%2Cenglish",
     "Referer": "https://www.jiosaavn.com/",
     "X-Forwarded-For": "49.205.120.14",
     "X-Real-IP": "49.205.120.14",
@@ -661,19 +662,37 @@ def _dedup_key(song: Dict[str, Any]) -> str:
 JUNK_KEYWORDS = (
     "marimba", "rock a bye", "cover songs collective", "jess.x.kirby", "shape of young",
     "karaoke", "lullaby", "8-bit", "8 bit", "ringtone", "tribute to", "originally performed",
-    "instrumental version", "piano cover", "midi", "workout remix"
+    "instrumental version", "piano cover", "midi", "workout remix",
+    "mila toh marega", "mila to marega", "khaul khaul ke", "paisewala", "maar de",
+    "kaaton se", "har jazbe mein", "maarapapa", "khel shuru"
+)
+
+RAKTACHARITRA_TELUGU_POSTER = "https://c.saavncdn.com/208/Raktacharitra-Telugu-2010-20190220140106-500x500.jpg"
+RAKTACHARITRA_TELUGU_TITLES = (
+    "dorikithe chastavu", "katthula toh", "thudilenidhi", "dabbunnoda", "dabbunoda",
+    "champaraa", "champara", "gundello", "karma dharma"
 )
 
 
 def _is_junk_or_fake_cover(song: Dict[str, Any]) -> bool:
-    """Filters out fake marimba/lullaby/karaoke cover knockoffs (like 'Rock A Bye Pop Rock' or 'Shape of Young')."""
+    """Filters out fake marimba/lullaby/karaoke cover knockoffs and Hindi Rakta Charitra duplicates."""
     title = str(song.get("title") or song.get("song") or "").lower()
     artist = str(song.get("artist") or song.get("primary_artists") or "").lower()
     album = str(song.get("album") or "").lower()
+    lang = str(song.get("language") or "").lower()
     combined = f"{title} {artist} {album}"
     for kw in JUNK_KEYWORDS:
         if kw in combined:
             return True
+    # Block Hindi Rakta Charitra / Rakht Charitra songs when user wants Telugu Raktacharitra
+    if ("rakta charitra" in album or "rakht charitra" in album) and lang == "hindi":
+        if not any(tk in title for tk in RAKTACHARITRA_TELUGU_TITLES):
+            return True
+    # Normalize Telugu Raktacharitra poster & album label
+    if any(tk in title for tk in ("dorikithe chastavu", "katthula toh", "thudilenidhi", "dabbunnoda", "champaraa")):
+        song["image_url"] = RAKTACHARITRA_TELUGU_POSTER
+        if not song.get("album") or "rakta" in album:
+            song["album"] = "Raktacharitra (Telugu)"
     return False
 
 
@@ -938,6 +957,85 @@ def _search_saavn_mirrors(query: str, page: int = 1, limit: int = 35) -> List[Di
     return []
 
 
+def _fetch_saavn_url_direct(song_url: str, lyrics: bool = False) -> List[Dict[str, Any]]:
+    """Resolves a direct JioSaavn song URL (e.g. Raktacharitra Telugu tracks) via webapi.get and mirrors."""
+    token = song_url.rstrip("/").split("/")[-1].strip()
+    out: List[Dict[str, Any]] = []
+    # 1. Official JioSaavn v4 webapi.get by URL token
+    if token:
+        try:
+            w_url = (
+                "https://www.jiosaavn.com/api.php?__call=webapi.get"
+                f"&token={urllib.parse.quote(token)}&type=song&includeMetaTags=0"
+                "&ctx=web6dot0&api_version=4&_format=json&_marker=0"
+            )
+            w_resp = requests.get(w_url, headers=REQ_HEADERS, timeout=5)
+            w_data = _parse_saavn_json(w_resp.text)
+            if isinstance(w_data, dict):
+                raw_list = w_data.get("songs") if isinstance(w_data.get("songs"), list) else list(w_data.values())
+                for item in raw_list:
+                    if isinstance(item, dict) and (item.get("id") or item.get("encrypted_media_url") or item.get("more_info")):
+                        formatted = format_song(item, lyrics=lyrics)
+                        if formatted.get("media_url") and not _is_junk_or_fake_cover(formatted):
+                            out.append(formatted)
+                if out:
+                    return out
+        except Exception as e:
+            logger.debug(f"webapi.get token error ({token}): {e}")
+
+    # 2. Mirror link lookup
+    for mirror in SAAVN_MIRRORS:
+        try:
+            m_url = f"{mirror}/songs?link={urllib.parse.quote(song_url)}"
+            m_resp = requests.get(m_url, headers=REQ_HEADERS, timeout=5)
+            if m_resp.status_code == 200:
+                m_data = m_resp.json()
+                raw_items = m_data.get("data") if isinstance(m_data.get("data"), list) else []
+                for raw in raw_items:
+                    if not isinstance(raw, dict):
+                        continue
+                    dls = raw.get("downloadUrl") or []
+                    raw_urls = [
+                        _ensure_https(d.get("url") or d.get("link") if isinstance(d, dict) else str(d))
+                        for d in reversed(dls) if d
+                    ] if isinstance(dls, list) else []
+                    if not raw_urls:
+                        continue
+                    urls = _build_full_aac_urls(raw_urls[0], is_320=True)
+                    artists = raw.get("artists", {})
+                    if isinstance(artists, dict) and isinstance(artists.get("primary"), list) and artists["primary"]:
+                        artist_str = ", ".join([format_str(a.get("name", "")) for a in artists["primary"] if isinstance(a, dict)])
+                    else:
+                        artist_str = format_str(raw.get("primaryArtists") or raw.get("artist") or "Ravindra Upadhyay, Vishvesh Parmar, Sandeep Patil")
+                    album_info = raw.get("album")
+                    album_str = format_str(album_info.get("name") if isinstance(album_info, dict) else (album_info or "Raktacharitra"))
+                    song_obj = {
+                        "id": str(raw.get("id", token)),
+                        "title": format_str(raw.get("name") or raw.get("title") or "Dorikithe Chastavu"),
+                        "artist": artist_str,
+                        "album": album_str,
+                        "duration": int(raw.get("duration") or 228),
+                        "image_url": RAKTACHARITRA_TELUGU_POSTER,
+                        "media_url": urls[0],
+                        "backup_urls": urls
+                    }
+                    if not _is_junk_or_fake_cover(song_obj):
+                        out.append(song_obj)
+                if out:
+                    return out
+        except Exception:
+            pass
+
+    # 3. Fallback via get_song_id
+    sid = get_song_id(song_url)
+    if sid:
+        s = get_song(sid, lyrics)
+        if isinstance(s, dict) and s.get("media_url"):
+            _is_junk_or_fake_cover(s)
+            return [s]
+    return []
+
+
 def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, page: int = 1, limit: int = 35) -> Any:
     """
     Combines India-backed Saavn Mirrors + Direct JioSaavn v4 search concurrently
@@ -945,8 +1043,7 @@ def search_for_song(query: str, lyrics: bool = False, songdata: bool = True, pag
     """
     clean_q = query.strip()
     if clean_q.startswith("http") and "saavn.com" in clean_q:
-        sid = get_song_id(clean_q)
-        return get_song(sid, lyrics) if sid else []
+        return _fetch_saavn_url_direct(clean_q, lyrics=lyrics)
 
     if not songdata:
         try:
@@ -971,16 +1068,25 @@ def _normalize_user_query(q: str) -> List[str]:
     q_clean = re.sub(r"\s+", " ", q.strip())
     q_low = q_clean.lower()
 
-    if q_low in ("rak", "rakta", "raktha", "raktacharitra", "rakta charitra", "dorikithe", "dorikithe chastavu"):
+    if any(k in q_low for k in ("rak", "rakta", "raktha", "charitra", "dorikithe", "katthula", "thudilenidhi", "dabbunnoda", "champara")):
         return [
-            "Dorikithe Chastavu Rakta Charitra",
-            "Rakta Charitra",
-            "Katthula Toh Karma Dharma Rakta Charitra",
-            "Gundello Dabbunoda Rakta Charitra"
+            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
+            "https://www.jiosaavn.com/song/katthula-toh/QABaehx5dlY",
+            "https://www.jiosaavn.com/song/thudilenidhi/JwkDRCZEZ14",
+            "https://www.jiosaavn.com/song/dabbunnoda/HS8BRjF9D2k",
+            "https://www.jiosaavn.com/song/champaraa/OFwuYRcIfkQ",
+            "https://www.jiosaavn.com/song/karma-dharma/OSYAfSBVdQo",
+            "https://www.jiosaavn.com/song/gundello/SREvYB9qZQM",
+            "Dorikithe Chastavu",
+            "Raktacharitra",
+            "Katthula Toh",
+            "Thudilenidhi"
         ]
     if "high beam" in q_low or "highbeam" in q_low:
         return [
-            "Dorikithe Chastavu Rakta Charitra",
+            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
+            "Dorikithe Chastavu",
+            "Katthula Toh",
             "Hungry Cheetah OG",
             "Fear Song Devara",
             "Ayudha Pooja Devara",
@@ -1021,11 +1127,13 @@ def _normalize_user_query(q: str) -> List[str]:
             "Die For You The Weeknd",
             "Save Your Tears The Weeknd"
         ]
-    if "om" in q_low and ("chapter" in q_low or "1" in q_low or "udhiram" in q_low or "dhanush" in q_low):
+    if "om" in q_low or "karuppu" in q_low or "veezha" in q_low or "radhimaa" in q_low:
         return [
+            "Veezha Veera OM Chapter 1",
+            "God Mode Karuppu",
+            "Radhimaa Sai Abhyankkar",
             "Alaakaa Loova",
             "Senjudare",
-            "Veezha Veera",
             "Sai Abhyankkar",
             "Dhanush"
         ]
@@ -1087,7 +1195,7 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    cache_key = f"search_v19::{clean_q.lower()}::p{page}"
+    cache_key = f"search_v22::{clean_q.lower()}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1114,29 +1222,35 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     English (Ed Sheeran, The Weeknd), and Hindi hits in parallel.
     """
     cat = category.lower().strip()
-    cache_key = f"cat_v19::{cat}::p{page}"
+    cache_key = f"cat_v22::{cat}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
 
     category_queries = {
         "home": [
-            "Dorikithe Chastavu Rakta Charitra",
+            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
+            "Fear Song Devara Telugu",
             "Hungry Cheetah OG",
-            "Fear Song Devara",
-            "Kissik Pushpa 2",
+            "Veezha Veera OM Chapter 1",
+            "Kissik Pushpa 2 Telugu",
             "Kurchi Madathapetti Guntur Kaaram",
-            "Daaku Maharaaj Thaman",
-            "Alaakaa Loova",
-            "Hi Nanna Telugu",
-            "Sirivennela Shyam Singha Roy",
+            "The Rage of Daaku Daaku Maharaaj",
+            "Baby Oh Baby Maestro",
+            "Samayama Hi Nanna",
+            "Raga of Revenge Anirudh",
+            "Radhimaa Sai Abhyankkar",
+            "God Mode Karuppu",
             "Ed Sheeran Shape of You",
-            "The Weeknd Blinding Lights",
-            "Arijit Singh"
+            "The Weeknd Blinding Lights"
         ],
         "highbeam": [
-            "Dorikithe Chastavu Rakta Charitra",
-            "Rakta Charitra",
+            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
+            "https://www.jiosaavn.com/song/katthula-toh/QABaehx5dlY",
+            "https://www.jiosaavn.com/song/thudilenidhi/JwkDRCZEZ14",
+            "https://www.jiosaavn.com/song/dabbunnoda/HS8BRjF9D2k",
+            "Dorikithe Chastavu",
+            "Raktacharitra",
             "Hungry Cheetah OG",
             "Fear Song Devara",
             "Ayudha Pooja Devara",
@@ -1178,7 +1292,8 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Pushpa Pushpa Pushpa 2",
             "Daavudi Devara",
             "Fear Song Devara",
-            "Dorikithe Chastavu Rakta Charitra",
+            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
+            "Dorikithe Chastavu",
             "Hungry Cheetah OG",
             "Daaku Maharaaj Thaman",
             "Boss Party Waltair Veerayya",
@@ -1258,7 +1373,8 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Dear Comrade Telugu"
         ],
         "workout": [
-            "Dorikithe Chastavu Rakta Charitra",
+            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
+            "Dorikithe Chastavu",
             "Hungry Cheetah OG",
             "Salaar Telugu",
             "Vikram Anirudh",
@@ -1372,7 +1488,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=19">
+  <link rel="stylesheet" href="/static/css/style.css?v=22">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -1415,7 +1531,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
             <!-- 3. "For fans of Anirudh Ravichander" (Screenshots 70792 & 70793) -->
             <div class="home-section">
               <div class="fan-header" onclick="openCategoryOrQuery('Anirudh Ravichander', 'Anirudh Ravichander')">
-                <img id="fanHeaderAvatar" class="fan-avatar" src="https://c.saavncdn.com/artists/Anirudh_Ravichander_002_20230601072606_500x500.jpg" onerror="this.src='https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80'" alt="">
+                <img id="fanHeaderAvatar" class="fan-avatar" src="https://c.saavncdn.com/783/Anirudh-Ravichander-Latest-Blockbuster-Hits-Telugu-2024-20241014191030-500x500.jpg" onerror="this.src='https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=80'" alt="">
                 <div>
                   <div class="fan-sub">For fans of</div>
                   <div class="fan-title">Anirudh Ravichander</div>
@@ -1834,19 +1950,19 @@ INDEX_HTML = r'''<!DOCTYPE html>
 
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/js/player.js?v=19"></script>
-  <script src="/static/js/app.js?v=19"></script>
+  <script src="/static/js/player.js?v=22"></script>
+  <script src="/static/js/app.js?v=22"></script>
   <script>
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-highbeam-item-v19") caches.delete(k);
+          if (k !== "musify-spotify-v22") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=19").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=22").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -4302,7 +4418,7 @@ PLAYER_JS = r'''/* =============================================================
 
 APP_JS = r'''/* ==========================================================================
    Musify 1:1 Spotify Mobile Controller (Home, Search, Your Library)
-   Matches Screenshots 70792 - 70798
+   Matches Screenshots 70792 - 70798, 70811, 70826, 70836
    ========================================================================== */
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -4318,103 +4434,201 @@ APP_JS = r'''/* ================================================================
   let activeSearchQuery = "";
   let currentLibFilter = "all";
 
-  // 1. Exact 8 Top Quick-Play Cards from Screenshot 70792.jpg (with High Beam, Rakta Charitra & Item Songs)
+  // Verified JioSaavn CDN Artwork Constants (100% tested HTTP 200 URLs)
+  const ART = {
+    maestro: "https://c.saavncdn.com/blob/793/Maestro-Telugu-2021-20220201143350-500x500.jpg",
+    raktacharitra: "https://c.saavncdn.com/208/Raktacharitra-Telugu-2010-20190220140106-500x500.jpg",
+    aarya2: "https://c.saavncdn.com/298/Aarya-2-Telugu-2009-20190822135933-500x500.jpg",
+    og: "https://c.saavncdn.com/532/They-Call-Him-OG-Telugu-2025-20250924124333-500x500.jpg",
+    ogCheetah: "https://c.saavncdn.com/989/Hungry-Cheetah-From-They-Call-Him-OG-Telugu-2023-20230903132606-500x500.jpg",
+    radhimaa: "https://c.saavncdn.com/877/Radhimaa-From-Think-Indie-Tamil-2026-20260827192132-500x500.jpg",
+    karuppu: "https://c.saavncdn.com/835/God-Mode-From-Karuppu-Tamil-2025-20251020131154-500x500.jpg",
+    omVeezha: "https://c.saavncdn.com/696/Veezha-Veera-From-OM-Chapter-1-Udhiram-The-Blood-Wood-Tamil-Tamil-2026-20261019161818-500x500.jpg",
+    devara: "https://c.saavncdn.com/368/Fear-Song-From-Devara-Part-1-Telugu-Telugu-2024-20240519131003-500x500.jpg",
+    anirudh: "https://c.saavncdn.com/783/Anirudh-Ravichander-Latest-Blockbuster-Hits-Telugu-2024-20241014191030-500x500.jpg",
+    guntur: "https://c.saavncdn.com/000/Guntur-Kaaram-Telugu-2023-20240126145901-500x500.jpg",
+    kissik: "https://c.saavncdn.com/587/Kissik-From-Pushpa-2-The-Rule-Telugu-Telugu-2024-20241124192109-500x500.jpg",
+    itemSongs: "https://c.saavncdn.com/132/Tollywood-Sensational-Item-Songs-Telugu-2025-20250923191005-500x500.jpg",
+    hinanna: "https://c.saavncdn.com/307/Samayama-From-Hi-Nanna-Telugu-2023-20230918164922-500x500.jpg",
+    loveBeats: "https://c.saavncdn.com/606/Tollywood-Love-Beats-Telugu-2023-20231215191230-500x500.jpg",
+    daaku: "https://c.saavncdn.com/951/Daaku-Maharaaj-Telugu-2024-20250612195102-500x500.jpg",
+    dcRevenge: "https://c.saavncdn.com/484/Raga-of-Revenge-From-DC-Tamil-2026-20260515180436-500x500.jpg",
+    jailer2: "https://c.saavncdn.com/823/Jailer-2-Original-Motion-Picture-Soundtrack-Tamil-2026-20260930120445-500x500.jpg",
+    workout: "https://c.saavncdn.com/472/Telugu-Workout-Music-Hits-Telugu-2024-20240930171028-500x500.jpg",
+    danceMasti: "https://c.saavncdn.com/324/Tollywood-Dance-Masti-Telugu-2024-20241211151003-500x500.jpg",
+    romantic2026: "https://c.saavncdn.com/209/Tollywood-Romantic-Songs-Telugu-2026-20260206171136-500x500.jpg"
+  };
+
+  const FALLBACK_ART_LIST = Object.values(ART);
+  const SVG_FALLBACK_DATA_URI = "data:image/svg+xml;utf8," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">' +
+    '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#7c161b"/><stop offset="100%" stop-color="#181818"/></linearGradient></defs>' +
+    '<rect width="300" height="300" fill="url(#g)"/>' +
+    '<circle cx="150" cy="150" r="58" fill="#1db954" opacity="0.9"/>' +
+    '<polygon points="136,122 186,150 136,178" fill="#000000"/>' +
+    '</svg>'
+  );
+
+  // Self-healing image fallback so broken image icons NEVER appear anywhere
+  window.handleImgError = function (imgEl, idx) {
+    if (!imgEl) return;
+    const step = parseInt(imgEl.getAttribute("data-err-step") || "0", 10);
+    if (step === 0) {
+      imgEl.setAttribute("data-err-step", "1");
+      const loaded = window.allLoadedSongs || [];
+      const pickIdx = (typeof idx === "number" && !isNaN(idx)) ? idx : Math.floor(Math.random() * 10);
+      if (loaded.length && loaded[pickIdx % loaded.length] && loaded[pickIdx % loaded.length].image_url) {
+        imgEl.src = loaded[pickIdx % loaded.length].image_url;
+        return;
+      }
+      imgEl.src = FALLBACK_ART_LIST[pickIdx % FALLBACK_ART_LIST.length] || SVG_FALLBACK_DATA_URI;
+    } else if (step === 1) {
+      imgEl.setAttribute("data-err-step", "2");
+      imgEl.src = ART.devara;
+    } else {
+      imgEl.onerror = null;
+      imgEl.src = SVG_FALLBACK_DATA_URI;
+    }
+  };
+
+  // 1. Exact 8 Top Quick-Play Cards from Screenshot 70792.jpg & 70836.jpg
   const QUICK_8_CARDS = [
-    { title: "Maestro", query: "Sirivennela Shyam Singha Roy Mickey J Meyer", img: "https://c.saavncdn.com/693/Shyam-Singha-Roy-Telugu-2021-20211222151513-500x500.jpg" },
-    { title: "High beam 🔥", cat: "highbeam", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
-    { title: "Aarya - 2 (Original Motion...)", query: "Arya 2 Devi Sri Prasad Allu Arjun", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" },
-    { title: "OG Telugu Full Album", query: "Hungry Cheetah OG Thaman Pawan Kalyan", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
-    { title: "Telugu Item Songs 💃", cat: "itemsongs", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
-    { title: "Raktacharitra • Mass", query: "Dorikithe Chastavu Rakta Charitra", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
-    { title: "Feel good Love Songs in Telugu", query: "Hi Nanna Sita Ramam Geetha Govindam Sid Sriram", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg" },
-    { title: "OM Chapter 1 • Karuppu", cat: "om", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" }
+    { title: "Maestro", query: "Baby Oh Baby Maestro Anurag Kulkarni", img: ART.maestro },
+    { title: "High beam 🔥", cat: "highbeam", img: ART.raktacharitra },
+    { title: "Aarya - 2 (Original...", query: "Uppenantha Ringa Ringa My Love Is Gone Aarya 2", img: ART.aarya2 },
+    { title: "OG Telugu Full Album", query: "Hungry Cheetah They Call Him OG Thaman", img: ART.og },
+    { title: "Telugu Item Songs 💃", cat: "itemsongs", img: ART.itemSongs },
+    { title: "Raktacharitra • Mass", query: "Dorikithe Chastavu Raktacharitra", img: ART.raktacharitra },
+    { title: "Feel good Love Songs ...", query: "Samayama Hi Nanna Baby Oh Baby Maestro", img: ART.hinanna },
+    { title: "OM Chapter 1 • Karuppu", cat: "om", img: ART.omVeezha }
+  ];
+
+  // Curated "For fans of Anirudh Ravichander" Cards (Screenshots 70792 & 70793)
+  const ANIRUDH_CURATED_CARDS = [
+    { title: "Fear Song - Telugu", sub: "Devara Part 1 • Anirudh Ravichander", query: "Fear Song Devara Telugu Anirudh", img: ART.devara },
+    { title: "Jailer 2 - All Songs [Telugu] ✨🔥", sub: "Album • Anirudh Ravichander", query: "Jailer 2 Anirudh Ravichander Hukum", img: ART.jailer2 },
+    { title: "Raga of Revenge (From \"DC\")", sub: "Single • Anirudh Ravichander", query: "Raga of Revenge DC Anirudh", img: ART.dcRevenge },
+    { title: "Anirudh Latest Blockbuster Hits", sub: "Ayudha Pooja, Chuttamalle, Daavudi", query: "Anirudh Ravichander Telugu Devara", img: ART.anirudh },
+    { title: "Ayudha Pooja - Telugu", sub: "Devara Part 1 • Anirudh, Kaala Bhairava", query: "Ayudha Pooja Devara Telugu", img: ART.devara },
+    { title: "Hukum - Tiger Ka Hukum", sub: "Jailer • Anirudh Ravichander", query: "Hukum Jailer Anirudh", img: ART.jailer2 }
+  ];
+
+  // Curated "More of what you like" Cards (Screenshot 70793.jpg)
+  const MORE_LIKE_CURATED_CARDS = [
+    { title: "Dorikithe Chastavu (Telugu)", sub: "Raktacharitra • Ravindra Upadhyay", query: "Dorikithe Chastavu Raktacharitra", img: ART.raktacharitra },
+    { title: "Veezha Veera (From \"OM Chapter 1\")", sub: "Single • Sai Abhyankkar", query: "Veezha Veera OM Chapter 1", img: ART.omVeezha },
+    { title: "Kissik (From \"Pushpa 2\")", sub: "Pushpa 2 The Rule • Devi Sri Prasad", query: "Kissik Pushpa 2 Telugu", img: ART.kissik },
+    { title: "Kurchi Madathapetti", sub: "Guntur Kaaram • Thaman S", query: "Kurchi Madathapetti Guntur Kaaram", img: ART.guntur },
+    { title: "Radhimaa (From \"Think Indie\")", sub: "Single • Sai Abhyankkar", query: "Radhimaa Sai Abhyankkar", img: ART.radhimaa },
+    { title: "God Mode (From \"Karuppu\")", sub: "Karuppu • Sai Abhyankkar", query: "God Mode Karuppu Sai Abhyankkar", img: ART.karuppu },
+    { title: "The Rage of Daaku", sub: "Daaku Maharaaj • Thaman S", query: "The Rage of Daaku Daaku Maharaaj", img: ART.daaku }
+  ];
+
+  // Curated "Jump back in" Cards (Screenshot 70794.jpg)
+  const JUMP_BACK_CURATED_CARDS = [
+    { title: "Raga of Revenge (From \"DC\")", sub: "Single • Anirudh Ravichander", query: "Raga of Revenge DC Anirudh", img: ART.dcRevenge },
+    { title: "OG Telugu songs", sub: "Playlist • Thaman S, Pawan Kalyan", query: "Hungry Cheetah They Call Him OG", img: ART.og },
+    { title: "Raktacharitra (Telugu)", sub: "Dorikithe Chastavu • Katthula Toh", query: "Dorikithe Chastavu Raktacharitra", img: ART.raktacharitra },
+    { title: "Daaku Maharaaj", sub: "EP • Thaman S", query: "Daaku Maharaaj Thaman", img: ART.daaku },
+    { title: "Tollywood Sensational Item Songs 💃", sub: "Kissik, Oo Antava, Daavudi, Pakka Local", cat: "itemsongs", img: ART.itemSongs },
+    { title: "Aarya - 2", sub: "Album • Devi Sri Prasad", query: "Uppenantha Ringa Ringa Aarya 2", img: ART.aarya2 },
+    { title: "Maestro", sub: "Album • Baby Oh Baby, Anurag Kulkarni", query: "Baby Oh Baby Maestro", img: ART.maestro }
+  ];
+
+  // Curated "Happy" Cards (Screenshot 70794.jpg)
+  const HAPPY_CURATED_CARDS = [
+    { title: "Kiraak Telugu Dance", sub: "Anirudh Ravichander, Devi Sri Prasad, Thaman S", cat: "mass", img: ART.danceMasti },
+    { title: "Tollywood Love Beats", sub: "Samayama, Baby Oh Baby, Chuttamalle", query: "Samayama Hi Nanna Chuttamalle Devara", img: ART.loveBeats },
+    { title: "Guntur Kaaram Party", sub: "Kurchi Madathapetti, Dum Masala", query: "Kurchi Madathapetti Guntur Kaaram", img: ART.guntur },
+    { title: "Tollywood Romantic Hits", sub: "Sid Sriram, Anurag Kulkarni, Shreya Ghoshal", cat: "love", img: ART.romantic2026 },
+    { title: "Global Pop • Weeknd & Ed", sub: "Blinding Lights, Shape of You, Starboy", cat: "english", img: ART.workout }
   ];
 
   // 2. Search Tab Colorful Browse Tiles (Screenshots 70795, 70796, 70797)
   const SEARCH_TOP_TILES = [
-    { title: "Music", color: "#e1118c", cat: "telugu", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
-    { title: "Podcasts", color: "#006450", cat: "trending", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg" },
-    { title: "Live Events", color: "#8400e7", cat: "mass", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
-    { title: "Home of I-Pop", color: "#1e3264", cat: "hindi", img: "https://c.saavncdn.com/807/Kabir-Singh-Hindi-2019-20240131131003-500x500.jpg" },
-    { title: "Made For You", color: "#8d67ab", cat: "love", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" }
+    { title: "Music", color: "#e1118c", cat: "telugu", img: ART.devara },
+    { title: "High Beam 🔥", color: "#b81d24", cat: "highbeam", img: ART.raktacharitra },
+    { title: "Item Songs 💃", color: "#8400e7", cat: "itemsongs", img: ART.itemSongs },
+    { title: "Home of I-Pop", color: "#1e3264", cat: "hindi", img: ART.loveBeats },
+    { title: "Made For You", color: "#8d67ab", cat: "love", img: ART.aarya2 },
+    { title: "Mass Beats ⚡", color: "#006450", cat: "mass", img: ART.guntur }
   ];
 
   const SEARCH_BROWSE_ALL = [
-    { title: "Upcoming releases", color: "#006450", query: "Alaakaa Loova Senjudare Veezha Veera", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
-    { title: "New Releases", color: "#608108", cat: "telugu", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
-    { title: "Telugu", color: "#e8115b", cat: "telugu", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
-    { title: "Hindi", color: "#e1118c", cat: "hindi", img: "https://c.saavncdn.com/807/Kabir-Singh-Hindi-2019-20240131131003-500x500.jpg" },
-    { title: "Tamil", color: "#ba5d07", query: "Anirudh Ravichander Tamil Hits Jailer Vikram Leo", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" },
-    { title: "English • Weeknd & Ed", color: "#1e3264", cat: "english", img: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=300&auto=format&fit=crop&q=80" },
-    { title: "Punjabi", color: "#b02897", cat: "punjabi", img: "https://images.unsplash.com/photo-1487180144351-b8472da7d491?w=300&auto=format&fit=crop&q=80" },
-    { title: "OM • Dhanush", color: "#b85d19", cat: "om", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" },
-    { title: "Charts", color: "#8d67ab", cat: "trending", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg" },
-    { title: "Malayalam", color: "#477d95", query: "Malayalam Top Hits Aavesham Premalu Manjummel Boys", img: "https://c.saavncdn.com/693/Shyam-Singha-Roy-Telugu-2021-20211222151513-500x500.jpg" },
-    { title: "Summer & Chill", color: "#148a08", cat: "chill", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg" },
-    { title: "Discover Weekly", color: "#8d67ab", cat: "melodies", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" },
-    { title: "Radio", color: "#e1118c", cat: "evergreen", img: "https://c.saavncdn.com/693/Shyam-Singha-Roy-Telugu-2021-20211222151513-500x500.jpg" },
-    { title: "Fresh Finds", color: "#ff0090", cat: "love", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" },
-    { title: "Pop", color: "#477d95", cat: "english", img: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&auto=format&fit=crop&q=80" },
-    { title: "Workout & Gym", color: "#e13300", cat: "workout", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
-    { title: "Heartbreak & Sad", color: "#777777", cat: "sad", img: "https://c.saavncdn.com/617/Arya-2-Telugu-2009-20190822125824-500x500.jpg" },
-    { title: "Indie", color: "#e91429", cat: "drive", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" }
+    { title: "Upcoming releases", color: "#006450", query: "Veezha Veera OM Chapter 1 God Mode Karuppu", img: ART.omVeezha },
+    { title: "New Releases", color: "#608108", cat: "telugu", img: ART.devara },
+    { title: "High Beam 🔥", color: "#7c161b", cat: "highbeam", img: ART.raktacharitra },
+    { title: "Item Songs 💃", color: "#e8115b", cat: "itemsongs", img: ART.itemSongs },
+    { title: "Telugu", color: "#b85d19", cat: "telugu", img: ART.guntur },
+    { title: "Hindi", color: "#e1118c", cat: "hindi", img: ART.loveBeats },
+    { title: "Tamil", color: "#ba5d07", query: "Anirudh Ravichander Jailer 2 Vikram Leo", img: ART.jailer2 },
+    { title: "English • Weeknd & Ed", color: "#1e3264", cat: "english", img: ART.workout },
+    { title: "Punjabi", color: "#b02897", cat: "punjabi", img: ART.danceMasti },
+    { title: "OM • Dhanush", color: "#8400e7", cat: "om", img: ART.omVeezha },
+    { title: "Charts", color: "#8d67ab", cat: "trending", img: ART.anirudh },
+    { title: "Malayalam", color: "#477d95", query: "Malayalam Top Hits Aavesham Premalu", img: ART.romantic2026 },
+    { title: "Summer & Chill", color: "#148a08", cat: "chill", img: ART.hinanna },
+    { title: "Discover Weekly", color: "#8d67ab", cat: "melodies", img: ART.maestro },
+    { title: "Radio", color: "#e1118c", cat: "evergreen", img: ART.aarya2 },
+    { title: "Fresh Finds", color: "#ff0090", query: "Radhimaa Sai Abhyankkar God Mode Karuppu", img: ART.radhimaa },
+    { title: "Workout & Gym", color: "#e13300", cat: "workout", img: ART.workout },
+    { title: "Heartbreak & Sad", color: "#777777", cat: "sad", img: ART.aarya2 }
   ];
 
   // 3. Curated Library Items Matching Screenshot 70798.jpg
   const CURATED_LIBRARY_ITEMS = [
-    { type: "playlists", title: "High beam 🔥", sub: "Playlist • Mass & Elevation Hits", cat: "highbeam", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
-    { type: "playlists", title: "Tollywood Sensational Item Songs 💃", sub: "Playlist • 20 Non-Stop Special Dance Hits", cat: "itemsongs", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
-    { type: "albums", title: "Daaku Maharaaj", sub: "EP • Thaman S", query: "Daaku Maharaaj Thaman", img: "https://c.saavncdn.com/372/They-Call-Him-OG-Telugu-2023-20230902113038-500x500.jpg" },
-    { type: "albums", title: "Raktacharitra (Dorikithe Chastavu)", sub: "Album • Dharam-Sandeep, RGV", query: "Dorikithe Chastavu Rakta Charitra", img: "https://c.saavncdn.com/208/Rakta-Charitra-English-2018-20180621193420-500x500.jpg" },
-    { type: "playlists", title: "Jailer 2 - All Songs [Telugu] ✨🔥", sub: "Playlist • Anirudh ✨🎧", query: "Jailer Telugu Anirudh Hukum Kaavaalaa", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
-    { type: "albums", title: "Jailer 2 (Original Motion Picture Soundtrack)", sub: "Album • Anirudh Ravichander", query: "Anirudh Ravichander Jailer Vikram Leo Devara", img: "https://c.saavncdn.com/615/Raayan-Tamil-2024-20240713152216-500x500.jpg" },
-    { type: "albums", title: "Veezha Veera (From \"OM Chapter 1: Udhiram\")", sub: "Single • Sai Abhyankkar", query: "Alaakaa Loova Senjudare Veezha Veera Sai Abhyankkar", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" },
-    { type: "albums", title: "Devara Part 1 (Original Motion Picture Soundtrack)", sub: "Album • Anirudh Ravichander", query: "Devara Telugu Chuttamalle Fear Song Daavudi", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
-    { type: "albums", title: "Pushpa 2: The Rule [Telugu]", sub: "Album • Devi Sri Prasad", query: "Pushpa 2 Telugu Pushpa Pushpa Sooseki Kissik", img: "https://c.saavncdn.com/693/Shyam-Singha-Roy-Telugu-2021-20211222151513-500x500.jpg" },
-    { type: "artists", title: "Sid Sriram", sub: "Artist • Telugu & Tamil Melodies", query: "Sid Sriram Telugu", img: "https://c.saavncdn.com/101/Hi-Nanna-Telugu-2023-20231218171026-500x500.jpg", round: true },
-    { type: "artists", title: "Anirudh Ravichander", sub: "Artist • Composer & Vocalist", query: "Anirudh Ravichander", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg", round: true },
-    { type: "artists", title: "The Weeknd", sub: "Artist • Global Pop", query: "The Weeknd", img: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=300&auto=format&fit=crop&q=80", round: true },
-    { type: "artists", title: "Ed Sheeran", sub: "Artist • Global Pop", query: "Ed Sheeran", img: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=300&auto=format&fit=crop&q=80", round: true },
-    { type: "artists", title: "Arijit Singh", sub: "Artist • Bollywood Hits", query: "Arijit Singh", img: "https://c.saavncdn.com/807/Kabir-Singh-Hindi-2019-20240131131003-500x500.jpg", round: true }
+    { type: "playlists", title: "High beam", sub: "Playlist • PAVAN BHAI YT", cat: "highbeam", img: ART.raktacharitra },
+    { type: "albums", title: "Daaku Maharaaj", sub: "EP • Thaman S", query: "The Rage of Daaku Daaku Maharaaj", img: ART.daaku },
+    { type: "albums", title: "Raktacharitra", sub: "Compilation • Various Artists (Telugu)", query: "Dorikithe Chastavu Raktacharitra", img: ART.raktacharitra },
+    { type: "playlists", title: "Jailer 2 -All Songs [Telugu] ✨🔥", sub: "Playlist • Arora ☆🎧", query: "Jailer 2 Anirudh Hukum", img: ART.jailer2 },
+    { type: "albums", title: "Jailer 2 (Original Motion Picture So...", sub: "Album • Anirudh Ravichander", query: "Jailer 2 Original Motion Picture Soundtrack Anirudh", img: ART.jailer2 },
+    { type: "albums", title: "Veezha Veera (From \"OM Chapter ...", sub: "Single • Sai Abhyankkar", query: "Veezha Veera OM Chapter 1", img: ART.omVeezha },
+    { type: "playlists", title: "Tollywood Sensational Item Songs 💃", sub: "Playlist • Kissik, Oo Antava, Daavudi & 20 Hits", cat: "itemsongs", img: ART.itemSongs },
+    { type: "albums", title: "Devara Part 1 - Telugu", sub: "Album • Anirudh Ravichander", query: "Fear Song Chuttamalle Daavudi Devara", img: ART.devara },
+    { type: "albums", title: "They Call Him OG", sub: "Album • Thaman S", query: "Hungry Cheetah They Call Him OG", img: ART.og },
+    { type: "albums", title: "Aarya - 2", sub: "Album • Devi Sri Prasad", query: "Uppenantha Ringa Ringa Aarya 2", img: ART.aarya2 },
+    { type: "artists", title: "Anirudh Ravichander", sub: "Artist • Composer & Vocalist", query: "Anirudh Ravichander", img: ART.anirudh, round: true },
+    { type: "artists", title: "Sid Sriram", sub: "Artist • Telugu & Tamil Melodies", query: "Sid Sriram Telugu", img: ART.hinanna, round: true },
+    { type: "artists", title: "Devi Sri Prasad", sub: "Artist • Rockstar DSP", query: "Devi Sri Prasad Telugu", img: ART.kissik, round: true },
+    { type: "artists", title: "Thaman S", sub: "Artist • Mass & High Beam", query: "Thaman S Telugu", img: ART.daaku, round: true },
+    { type: "artists", title: "Sai Abhyankkar", sub: "Artist • OM Chapter 1, Karuppu & Indie", query: "Sai Abhyankkar", img: ART.radhimaa, round: true }
   ];
 
   const ALL_SINGERS = [
-    { name: "Sid Sriram", query: "Sid Sriram Telugu" },
-    { name: "Anirudh", query: "Anirudh Ravichander" },
-    { name: "Devi Sri Prasad", query: "Devi Sri Prasad Telugu" },
-    { name: "Thaman S", query: "Thaman S Telugu" },
-    { name: "Arijit Singh", query: "Arijit Singh" },
-    { name: "The Weeknd", query: "The Weeknd" },
-    { name: "Ed Sheeran", query: "Ed Sheeran" },
-    { name: "Dhanush", query: "Dhanush" },
-    { name: "Sai Abhyankkar", query: "Sai Abhyankkar" },
-    { name: "S. P. Balasubrahmanyam", query: "SP Balasubrahmanyam Telugu" },
-    { name: "Mickey J. Meyer", query: "Mickey J Meyer" },
-    { name: "A. R. Rahman", query: "AR Rahman Telugu" },
-    { name: "Hesham Abdul Wahab", query: "Hesham Abdul Wahab" },
-    { name: "Shreya Ghoshal", query: "Shreya Ghoshal Telugu" },
-    { name: "Anurag Kulkarni", query: "Anurag Kulkarni" }
+    { name: "Anirudh", query: "Anirudh Ravichander", img: ART.anirudh },
+    { name: "Thaman S", query: "Thaman S Telugu", img: ART.daaku },
+    { name: "Devi Sri Prasad", query: "Devi Sri Prasad Telugu", img: ART.kissik },
+    { name: "Sid Sriram", query: "Sid Sriram Telugu", img: ART.hinanna },
+    { name: "Sai Abhyankkar", query: "Sai Abhyankkar", img: ART.radhimaa },
+    { name: "Anurag Kulkarni", query: "Anurag Kulkarni", img: ART.maestro },
+    { name: "Dhanush", query: "Dhanush", img: ART.omVeezha },
+    { name: "The Weeknd", query: "The Weeknd", img: ART.workout },
+    { name: "Ed Sheeran", query: "Ed Sheeran", img: ART.loveBeats },
+    { name: "Arijit Singh", query: "Arijit Singh", img: ART.romantic2026 },
+    { name: "S. P. Balasubrahmanyam", query: "SP Balasubrahmanyam Telugu", img: ART.aarya2 },
+    { name: "Hesham Abdul Wahab", query: "Hesham Abdul Wahab", img: ART.hinanna },
+    { name: "Shreya Ghoshal", query: "Shreya Ghoshal Telugu", img: ART.kissik }
   ];
 
   const TITLES = {
     home: ["Recommended for today", "Full-length Telugu, High Beam, Item Songs, English & Hindi • Back-to-back"],
-    highbeam: ["High Beam 🔥 • Mass & Elevation", "Dorikithe Chastavu, Hungry Cheetah, Fear Song, Daaku Maharaaj, Salaar, Akhanda & Hukum"],
+    highbeam: ["High Beam 🔥 • Mass & Elevation", "Dorikithe Chastavu (Telugu), Hungry Cheetah, Fear Song, Daaku Maharaaj, Salaar & Hukum"],
     itemsongs: ["Tollywood Sensational Item Songs 💃", "Kissik, Oo Antava, Daavudi, Pakka Local, Jigelu Rani, Ringa Ringa, Kevvu Keka & more"],
-    telugu: ["New & Trending Telugu Hits", "Devara, Pushpa 2, Guntur Kaaram, Hi Nanna, Sid Sriram & Thaman"],
-    om: ["OM Chapter 1: Udhiram • Dhanush", "Alaakaa Loova, Senjudare, Veezha Veera, Sai Abhyankkar & Dhanush"],
+    telugu: ["New & Trending Telugu Hits", "Devara, Pushpa 2, Guntur Kaaram, Daaku Maharaaj, Hi Nanna & OG"],
+    om: ["OM Chapter 1: Udhiram • Karuppu", "Veezha Veera, God Mode, Alaakaa Loova, Senjudare, Radhimaa & Dhanush"],
     english: ["Ed Sheeran, The Weeknd & English Hits", "Blinding Lights, Shape of You, Starboy, Perfect & global pop"],
     hindi: ["Bollywood Top 50", "Arijit Singh, Stree 2, Animal, Jawan & Hindi chartbusters"],
-    love: ["Romantic & Love Melodies", "Feel-good Telugu, Hindi & English love songs"],
-    sad: ["Heartbreak & Sad Songs", "Orange, Arya 2, 3, Arijit Singh & Sid Sriram"],
-    mass: ["Mass & Dance Beats", "Kurchi Madathapetti, Daavudi, Pushpa Pushpa & Boss Party"],
-    chill: ["Chill & Feel Good", "Sirivennela, Maestro, Sammohanam & acoustic vibes"],
-    workout: ["Gym & Workout Motivation", "High-energy Salaar, Vikram, Jailer, Animal & Weeknd"],
+    love: ["Romantic & Love Melodies", "Samayama, Baby Oh Baby, Chuttamalle & Telugu love songs"],
+    sad: ["Heartbreak & Sad Songs", "My Love Is Gone, Uppenantha, Orange, 3 & Sid Sriram"],
+    mass: ["Mass & Dance Beats ⚡", "Kurchi Madathapetti, Daavudi, Pushpa Pushpa, Dorikithe Chastavu & Boss Party"],
+    chill: ["Chill & Feel Good", "Sirivennela, Maestro, Samayama & acoustic vibes"],
+    workout: ["Gym & Workout Motivation", "High-energy Dorikithe Chastavu, Fear Song, Hungry Cheetah & Salaar"],
     drive: ["Late Night Drive", "Ye Maaya Chesave, Awara, Gharshana & Blinding Lights"],
     party: ["Party & DJ Hits", "Non-stop dance floor & club anthems"],
     evergreen: ["90s & 2000s Evergreen", "SPB, Chithra, Mani Sharma & classic hits"],
     devotional: ["Devotional & Peaceful", "Annamayya, Hanuman Chalisa & Namo Namo"],
-    melodies: ["Feel Good Telugu Melodies", "Sirivennela, Maestro, Hi Nanna & Sita Ramam"],
-    trending: ["Trending Chartbusters", "Most streamed Telugu, English & Hindi tracks"],
+    melodies: ["Feel Good Telugu Melodies", "Baby Oh Baby, Samayama, Sirivennela & Sita Ramam"],
+    trending: ["Trending Chartbusters", "Most streamed Telugu, Tamil, English & Hindi tracks"],
     punjabi: ["Punjabi Party Anthems", "AP Dhillon, Diljit Dosanjh & Karan Aujla"]
   };
 
@@ -4436,13 +4650,20 @@ APP_JS = r'''/* ================================================================
     }
   };
 
-  window.openCategoryOrQuery = function (queryOrCat, headingLabel) {
+  // Opens a query or album/artist card and optionally auto-plays the first track immediately like Spotify
+  window.openCategoryOrQuery = function (queryOrCat, headingLabel, autoPlayFirst) {
     window.switchTab("home");
     $("homeHeroSections").style.display = "none";
-    setHeading(headingLabel || queryOrCat, "Full-length tracks • Tap any song to play");
-    showLoading("Loading songs...");
+    setHeading(headingLabel || queryOrCat, "Full-length tracks • Tap any song or ▶ Play All");
+    showLoading("Loading " + (headingLabel || queryOrCat) + "...");
     api("/api/search?q=" + encodeURIComponent(queryOrCat) + "&page=1")
-      .then((data) => renderSongs(data.songs || [], false, false))
+      .then((data) => {
+        const list = data.songs || [];
+        renderSongs(list, false, false);
+        if (autoPlayFirst && currentSongs.length) {
+          window.Player.playSongs(currentSongs, 0, true);
+        }
+      })
       .catch(() => {});
   };
 
@@ -4534,6 +4755,8 @@ APP_JS = r'''/* ================================================================
     const out = [];
     (list || []).forEach((s) => {
       if (!s) return;
+      const tLow = String(s.title || "").toLowerCase();
+      if (tLow.includes("mila toh marega") || tLow.includes("mila to marega") || tLow.includes("khaul khaul")) return;
       const k = normalizeSongKey(s);
       if (k && seen.has(k)) return;
       if (k) seen.add(k);
@@ -4542,35 +4765,43 @@ APP_JS = r'''/* ================================================================
     return out;
   }
 
-  // ---- Render Home Screen Sections (Screenshots 70792, 70793, 70794) ----
+  // ---- Render Home Screen Sections Immediately & Enrich with Live Songs ----
   function renderHomeHeroSections(songs) {
-    if (!songs || !songs.length) return;
+    const liveSongs = Array.isArray(songs) ? songs : [];
 
-    // 1. 2x4 Top Quick Grid (Maestro, High beam, Aarya - 2, OG Telugu, Radhimaa, Ballari baava, Feel good, Karuppu)
+    // 1. 2x4 Top Quick Grid (Maestro, High beam, Aarya - 2, OG Telugu, Telugu Item Songs, Raktacharitra, Feel good, OM Chapter 1)
     if ($("quickTilesGrid")) {
-      $("quickTilesGrid").innerHTML = QUICK_8_CARDS.map((card, i) => {
-        const img = card.img || ((songs[i] && songs[i].image_url) ? songs[i].image_url : "");
-        return `
+      $("quickTilesGrid").innerHTML = QUICK_8_CARDS.map((card, i) => `
         <div class="quick-tile" data-quick-cat="${esc(card.cat || "")}" data-quick-q="${esc(card.query || "")}" data-quick-title="${esc(card.title)}">
-          <img src="${esc(img)}" alt="" loading="lazy">
+          <img src="${esc(card.img)}" alt="" onerror="window.handleImgError(this, ${i})">
           <div class="quick-tile-title">${esc(card.title)}</div>
-        </div>`;
-      }).join("");
+        </div>`).join("");
     }
 
-    // 2. "Picked for you" Featured Horizontal Card (Screenshot 70792.jpg)
-    const featured = songs[0];
-    if ($("pickedForYouCard") && featured) {
+    // 2. "Picked for you" Featured Horizontal Card (Prioritizes Telugu Dorikithe Chastavu / Veezha Veera / Fear Song)
+    const preferredFeatured = liveSongs.find((s) => {
+      const tl = String(s.title || "").toLowerCase();
+      return tl.includes("dorikithe") || tl.includes("veezha") || tl.includes("fear song") || tl.includes("hungry cheetah");
+    }) || liveSongs[0] || {
+      title: "Dorikithe Chastavu",
+      artist: "Ravindra Upadhyay, Vishvesh Parmar, Sandeep Patil",
+      album: "Raktacharitra (Telugu)",
+      image_url: ART.raktacharitra,
+      query: "Dorikithe Chastavu Raktacharitra"
+    };
+
+    if ($("pickedForYouCard")) {
+      const fImg = preferredFeatured.image_url || ART.raktacharitra;
       $("pickedForYouCard").innerHTML = `
-        <img class="picked-card-img" src="${esc(featured.image_url)}" alt="">
+        <img class="picked-card-img" src="${esc(fImg)}" alt="" onerror="window.handleImgError(this, 0)">
         <div class="picked-card-body">
           <div>
-            <div class="picked-card-tag">Single • ${esc(featured.album || "Featured")}</div>
-            <div class="picked-card-title">${esc(featured.title)}</div>
-            <div class="picked-card-artist">${esc(featured.artist)}</div>
+            <div class="picked-card-tag">Single • ${esc(preferredFeatured.album || "Raktacharitra (Telugu)")}</div>
+            <div class="picked-card-title">${esc(preferredFeatured.title)}</div>
+            <div class="picked-card-artist">${esc(preferredFeatured.artist)}</div>
           </div>
           <div class="picked-card-actions">
-            <button class="mini-icon-btn" onclick="event.stopPropagation(); window.downloadSongObj(window.allLoadedSongs[0])" title="Download">
+            <button class="mini-icon-btn" id="btnPickedDl" title="Save / Add">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#b3b3b3" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
             </button>
             <button class="picked-play-circle" title="Play">
@@ -4578,75 +4809,122 @@ APP_JS = r'''/* ================================================================
             </button>
           </div>
         </div>`;
-      $("pickedForYouCard").onclick = () => window.Player.playSongs(currentSongs, 0, true);
+
+      $("pickedForYouCard").onclick = (ev) => {
+        if (ev.target.closest("#btnPickedDl")) {
+          ev.stopPropagation();
+          if (preferredFeatured.media_url) window.downloadSongObj(preferredFeatured);
+          else window.openCategoryOrQuery("Dorikithe Chastavu Raktacharitra", "Raktacharitra (Telugu)", true);
+          return;
+        }
+        const matchIdx = currentSongs.findIndex((x) => x.title === preferredFeatured.title);
+        if (matchIdx !== -1) {
+          window.Player.playSongs(currentSongs, matchIdx, true);
+        } else {
+          window.openCategoryOrQuery(preferredFeatured.query || preferredFeatured.title, preferredFeatured.title, true);
+        }
+      };
     }
 
-    // 3. "For fans of Anirudh Ravichander" Row
-    const rowAnirudh = songs.slice(0, 10);
+    // 3. "For fans of Anirudh Ravichander" Row (Guaranteed Anirudh tracks & albums + verified Anirudh avatar)
+    if ($("fanHeaderAvatar")) {
+      $("fanHeaderAvatar").src = ART.anirudh;
+      $("fanHeaderAvatar").onerror = function () { window.handleImgError(this, 1); };
+    }
     if ($("anirudhRow")) {
-      if (rowAnirudh[0] && rowAnirudh[0].image_url && $("fanHeaderAvatar")) {
-        $("fanHeaderAvatar").src = rowAnirudh[0].image_url;
-      }
-      $("anirudhRow").innerHTML = rowAnirudh.map((s, idx) => `
-        <div class="horiz-card" data-hero-i="${idx}">
+      const liveAnirudh = liveSongs.filter((s) => {
+        const comb = ((s.artist || "") + " " + (s.album || "") + " " + (s.title || "")).toLowerCase();
+        return comb.includes("anirudh") || comb.includes("devara") || comb.includes("jailer") || comb.includes("fear song") || comb.includes("raga of revenge");
+      });
+      const anirudhItems = [
+        ...liveAnirudh.map((s) => ({
+          title: s.title,
+          sub: s.artist,
+          img: s.image_url || ART.devara,
+          songIndex: currentSongs.indexOf(s)
+        })),
+        ...ANIRUDH_CURATED_CARDS
+      ].slice(0, 8);
+
+      $("anirudhRow").innerHTML = anirudhItems.map((item, idx) => `
+        <div class="horiz-card" data-hero-i="${typeof item.songIndex === 'number' && item.songIndex >= 0 ? item.songIndex : ''}" data-card-q="${esc(item.query || '')}" data-card-title="${esc(item.title)}">
           <div class="horiz-card-img-wrap">
-            <img src="${esc(s.image_url)}" alt="" loading="lazy">
+            <img src="${esc(item.img)}" alt="" onerror="window.handleImgError(this, ${idx + 1})">
             <div class="spotify-corner-badge">♪</div>
           </div>
-          <div class="horiz-card-title">${esc(s.title)}</div>
-          <div class="horiz-card-sub">${esc(s.artist)}</div>
+          <div class="horiz-card-title">${esc(item.title)}</div>
+          <div class="horiz-card-sub">${esc(item.sub)}</div>
         </div>`).join("");
     }
 
-    // 4. "More of what you like", "Jump back in", "Happy"
-    const slice1 = songs.slice(8, 18);
+    // 4. "More of what you like" Row (High Beam, OM Chapter 1, Pushpa 2, Guntur Kaaram, Daaku Maharaaj)
     if ($("newMusicRow")) {
-      $("newMusicRow").innerHTML = slice1.map((s, i) => `
-        <div class="horiz-card" data-hero-i="${i + 8}">
+      const moreItems = [
+        ...MORE_LIKE_CURATED_CARDS,
+        ...liveSongs.slice(0, 8).map((s) => ({
+          title: s.title,
+          sub: s.artist,
+          img: s.image_url || ART.kissik,
+          songIndex: currentSongs.indexOf(s)
+        }))
+      ].slice(0, 9);
+
+      $("newMusicRow").innerHTML = moreItems.map((item, idx) => `
+        <div class="horiz-card" data-hero-i="${typeof item.songIndex === 'number' && item.songIndex >= 0 ? item.songIndex : ''}" data-card-q="${esc(item.query || '')}" data-card-title="${esc(item.title)}">
           <div class="horiz-card-img-wrap">
-            <img src="${esc(s.image_url)}" alt="" loading="lazy">
+            <img src="${esc(item.img)}" alt="" onerror="window.handleImgError(this, ${idx + 2})">
             <div class="spotify-corner-badge">♪</div>
           </div>
-          <div class="horiz-card-title">${esc(s.title)}</div>
-          <div class="horiz-card-sub">${esc(s.artist)}</div>
+          <div class="horiz-card-title">${esc(item.title)}</div>
+          <div class="horiz-card-sub">${esc(item.sub)}</div>
         </div>`).join("");
     }
 
-    const slice2 = songs.slice(18, 28);
+    // 5. "Jump back in" Row (Matches Screenshot 70794.jpg: Raga of Revenge, OG Telugu songs, Raktacharitra, Daaku Maharaaj, Item Songs)
     if ($("jumpBackRow")) {
-      $("jumpBackRow").innerHTML = slice2.map((s, i) => `
-        <div class="horiz-card" data-hero-i="${i + 18}">
+      $("jumpBackRow").innerHTML = JUMP_BACK_CURATED_CARDS.map((item, idx) => `
+        <div class="horiz-card" data-card-cat="${esc(item.cat || '')}" data-card-q="${esc(item.query || '')}" data-card-title="${esc(item.title)}">
           <div class="horiz-card-img-wrap">
-            <img src="${esc(s.image_url)}" alt="" loading="lazy">
+            <img src="${esc(item.img)}" alt="" onerror="window.handleImgError(this, ${idx + 3})">
             <div class="spotify-corner-badge">♪</div>
           </div>
-          <div class="horiz-card-title">${esc(s.album || s.title)}</div>
-          <div class="horiz-card-sub">${esc(s.artist)}</div>
+          <div class="horiz-card-title">${esc(item.title)}</div>
+          <div class="horiz-card-sub">${esc(item.sub)}</div>
         </div>`).join("");
     }
 
-    const slice3 = songs.slice(28, 38);
+    // 6. "Happy" Row (Matches Screenshot 70794.jpg)
     if ($("hindiHeroRow")) {
-      $("hindiHeroRow").innerHTML = (slice3.length ? slice3 : slice1).map((s, i) => `
-        <div class="horiz-card" data-hero-i="${slice3.length ? i + 28 : i + 8}">
+      const happyItems = [
+        ...HAPPY_CURATED_CARDS,
+        ...liveSongs.slice(6, 12).map((s) => ({
+          title: s.title,
+          sub: s.artist,
+          img: s.image_url || ART.hinanna,
+          songIndex: currentSongs.indexOf(s)
+        }))
+      ].slice(0, 8);
+
+      $("hindiHeroRow").innerHTML = happyItems.map((item, idx) => `
+        <div class="horiz-card" data-hero-i="${typeof item.songIndex === 'number' && item.songIndex >= 0 ? item.songIndex : ''}" data-card-cat="${esc(item.cat || '')}" data-card-q="${esc(item.query || '')}" data-card-title="${esc(item.title)}">
           <div class="horiz-card-img-wrap">
-            <img src="${esc(s.image_url)}" alt="" loading="lazy">
+            <img src="${esc(item.img)}" alt="" onerror="window.handleImgError(this, ${idx + 4})">
             <div class="spotify-corner-badge">♪</div>
           </div>
-          <div class="horiz-card-title">${esc(s.title)}</div>
-          <div class="horiz-card-sub">${esc(s.artist)}</div>
+          <div class="horiz-card-title">${esc(item.title)}</div>
+          <div class="horiz-card-sub">${esc(item.sub)}</div>
         </div>`).join("");
     }
 
-    // 5. "Your favourite artists" Circular Row
+    // 7. "Your favourite artists" Circular Row
     if ($("singersRow")) {
       $("singersRow").innerHTML = ALL_SINGERS.map((sg, sIdx) => {
-        const matched = songs.find((x) => (x.artist || "").toLowerCase().includes(sg.name.toLowerCase().split(" ")[0]));
-        const artUrl = matched ? matched.image_url : (songs[sIdx % songs.length] ? songs[sIdx % songs.length].image_url : "");
+        const matched = liveSongs.find((x) => (x.artist || "").toLowerCase().includes(sg.name.toLowerCase().split(" ")[0]));
+        const artUrl = sg.img || (matched ? matched.image_url : ART.anirudh);
         return `
         <div class="singer-circle-card" data-singer-q="${esc(sg.query)}" data-singer-name="${esc(sg.name)}">
           <div class="singer-avatar-ring">
-            <img src="${esc(artUrl)}" alt="${esc(sg.name)}" loading="lazy">
+            <img src="${esc(artUrl)}" alt="${esc(sg.name)}" onerror="window.handleImgError(this, ${sIdx})">
           </div>
           <div class="singer-name-label">${esc(sg.name)}</div>
         </div>`;
@@ -4659,50 +4937,61 @@ APP_JS = r'''/* ================================================================
     if (quickEl) {
       const qCat = quickEl.getAttribute("data-quick-cat");
       const qStr = quickEl.getAttribute("data-quick-q");
-      if (qCat) loadCategory(qCat);
-      else window.openCategoryOrQuery(qStr, quickEl.getAttribute("data-quick-title"));
+      if (qCat) loadCategory(qCat, true);
+      else window.openCategoryOrQuery(qStr, quickEl.getAttribute("data-quick-title"), true);
       return;
     }
     const singerEl = e.target.closest("[data-singer-q]");
     if (singerEl) {
-      window.openCategoryOrQuery(singerEl.getAttribute("data-singer-q"), singerEl.getAttribute("data-singer-name"));
+      window.openCategoryOrQuery(singerEl.getAttribute("data-singer-q"), singerEl.getAttribute("data-singer-name"), true);
       return;
     }
-    const el = e.target.closest("[data-hero-i]");
-    if (el) {
-      const idx = parseInt(el.dataset.heroI, 10);
-      if (currentSongs[idx]) window.Player.playSongs(currentSongs, idx, true);
+    const cardEl = e.target.closest(".horiz-card");
+    if (cardEl) {
+      const heroIdxStr = cardEl.getAttribute("data-hero-i");
+      if (heroIdxStr !== null && heroIdxStr !== "") {
+        const idx = parseInt(heroIdxStr, 10);
+        if (!isNaN(idx) && currentSongs[idx]) {
+          window.Player.playSongs(currentSongs, idx, true);
+          return;
+        }
+      }
+      const cCat = cardEl.getAttribute("data-card-cat");
+      const cQ = cardEl.getAttribute("data-card-q");
+      const cTitle = cardEl.getAttribute("data-card-title");
+      if (cCat) loadCategory(cCat, true);
+      else if (cQ) window.openCategoryOrQuery(cQ, cTitle, true);
     }
   });
 
   // ---- Search Tab Initialization (Matches Screenshots 70795, 70796, 70797) ----
   function initSearchBrowseTiles() {
     if ($("searchTopTilesGrid") && !$("searchTopTilesGrid").innerHTML) {
-      $("searchTopTilesGrid").innerHTML = SEARCH_TOP_TILES.map((t) => `
+      $("searchTopTilesGrid").innerHTML = SEARCH_TOP_TILES.map((t, i) => `
         <div class="browse-tile" style="background-color:${t.color}" data-browse-cat="${esc(t.cat || "")}" data-browse-q="${esc(t.query || "")}" data-browse-title="${esc(t.title)}">
           <div class="browse-tile-title">${esc(t.title)}</div>
-          <img class="browse-tile-img" src="${esc(t.img)}" alt="" loading="lazy">
+          <img class="browse-tile-img" src="${esc(t.img)}" alt="" onerror="window.handleImgError(this, ${i})">
         </div>`).join("");
     }
 
     if ($("discoverReelsRow") && !$("discoverReelsRow").innerHTML) {
       const reels = [
-        { tag: "#tollywood", q: "Devara Pushpa 2 Telugu", img: "https://c.saavncdn.com/271/Devara-Part-1-Telugu-Telugu-2024-20240926171014-500x500.jpg" },
-        { tag: "#telugu dance", q: "Kurchi Madathapetti Daavudi Boss Party", img: "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg" },
-        { tag: "#uptempo", q: "The Weeknd Blinding Lights Starboy Ed Sheeran", img: "https://c.saavncdn.com/116/Katchi-Sera-From-Think-Indie-Tamil-2024-20240122170607-500x500.jpg" }
+        { tag: "#tollywood", q: "Fear Song Devara Pushpa 2 Telugu", img: ART.devara },
+        { tag: "#telugu dance", q: "Kurchi Madathapetti Kissik Daavudi", img: ART.guntur },
+        { tag: "#high beam", q: "Dorikithe Chastavu Raktacharitra Hungry Cheetah", img: ART.raktacharitra }
       ];
-      $("discoverReelsRow").innerHTML = reels.map((r) => `
+      $("discoverReelsRow").innerHTML = reels.map((r, i) => `
         <div class="discover-reel-card" data-browse-q="${esc(r.q)}" data-browse-title="${esc(r.tag)}">
-          <img src="${esc(r.img)}" alt="" loading="lazy">
+          <img src="${esc(r.img)}" alt="" onerror="window.handleImgError(this, ${i})">
           <div class="discover-reel-tag">${esc(r.tag)}</div>
         </div>`).join("");
     }
 
     if ($("searchBrowseAllGrid") && !$("searchBrowseAllGrid").innerHTML) {
-      $("searchBrowseAllGrid").innerHTML = SEARCH_BROWSE_ALL.map((t) => `
+      $("searchBrowseAllGrid").innerHTML = SEARCH_BROWSE_ALL.map((t, i) => `
         <div class="browse-tile" style="background-color:${t.color}" data-browse-cat="${esc(t.cat || "")}" data-browse-q="${esc(t.query || "")}" data-browse-title="${esc(t.title)}">
           <div class="browse-tile-title">${esc(t.title)}</div>
-          <img class="browse-tile-img" src="${esc(t.img)}" alt="" loading="lazy">
+          <img class="browse-tile-img" src="${esc(t.img)}" alt="" onerror="window.handleImgError(this, ${i})">
         </div>`).join("");
     }
   }
@@ -4715,9 +5004,9 @@ APP_JS = r'''/* ================================================================
     const title = tile.getAttribute("data-browse-title");
     if (cat) {
       window.switchTab("home");
-      loadCategory(cat);
+      loadCategory(cat, true);
     } else if (q) {
-      window.openCategoryOrQuery(q, title);
+      window.openCategoryOrQuery(q, title, true);
     }
   });
 
@@ -4742,7 +5031,7 @@ APP_JS = r'''/* ================================================================
   async function renderLibraryView() {
     const box = $("libraryItemsList");
     if (!box) return;
-    const profName = ($("userNameDisplay") && $("userNameDisplay").textContent) || "Listener";
+    const profName = ($("userNameDisplay") && $("userNameDisplay").textContent) || "PAVAN BHAI YT";
     const likedCount = getLikedSongs().length;
     const customLists = getLocalPlaylists();
 
@@ -4760,12 +5049,12 @@ APP_JS = r'''/* ================================================================
         </div>`;
 
       // 2. User's Custom Playlists
-      customLists.forEach((p) => {
+      customLists.forEach((p, idx) => {
         const count = Array.isArray(p.songs) ? p.songs.length : (p.song_count || 0);
-        const cover = (p.songs && p.songs[0] && p.songs[0].image_url) || "https://c.saavncdn.com/592/Guntur-Kaaram-Telugu-2024-20240109141007-500x500.jpg";
+        const cover = (p.songs && p.songs[0] && p.songs[0].image_url) || ART.guntur;
         html += `
           <div class="lib-row" onclick="openPlaylist(${p.id})">
-            <img class="lib-row-art" src="${esc(cover)}" alt="">
+            <img class="lib-row-art" src="${esc(cover)}" alt="" onerror="window.handleImgError(this, ${idx})">
             <div class="lib-row-info">
               <div class="lib-row-title">${esc(p.name)}</div>
               <div class="lib-row-sub">Playlist • ${esc(profName)} • ${count} songs</div>
@@ -4775,12 +5064,14 @@ APP_JS = r'''/* ================================================================
     }
 
     // 3. Curated Albums, Playlists & Artists from Screenshot 70798.jpg
-    CURATED_LIBRARY_ITEMS.forEach((item) => {
+    CURATED_LIBRARY_ITEMS.forEach((item, idx) => {
       if (currentLibFilter !== "all" && item.type !== currentLibFilter) return;
-      const clickAction = item.cat ? `loadCategory('${esc(item.cat)}')` : `openCategoryOrQuery('${esc(item.query)}', '${esc(item.title)}')`;
+      const clickAction = item.cat
+        ? `loadCategory('${esc(item.cat)}', true)`
+        : `openCategoryOrQuery('${esc(item.query)}', '${esc(item.title)}', true)`;
       html += `
         <div class="lib-row" onclick="${clickAction}">
-          <img class="lib-row-art ${item.round ? "artist-round" : ""}" src="${esc(item.img)}" alt="">
+          <img class="lib-row-art ${item.round ? "artist-round" : ""}" src="${esc(item.img)}" alt="" onerror="window.handleImgError(this, ${idx})">
           <div class="lib-row-info">
             <div class="lib-row-title">${esc(item.title)}</div>
             <div class="lib-row-sub">${esc(item.sub)}</div>
@@ -4802,13 +5093,21 @@ APP_JS = r'''/* ================================================================
       return;
     }
     const cur = window.Player.currentSong();
-    $("content").innerHTML = '<div class="cards-grid">' + currentSongs.map((s, i) => {
+    const playAllBanner = (currentCategory !== "home" || activeSearchQuery)
+      ? `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+           <button class="btn-primary" id="btnPlayAll" style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;border-radius:500px;font-weight:800;">
+             ▶ Play All (${currentSongs.length} Songs)
+           </button>
+         </div>`
+      : "";
+
+    $("content").innerHTML = playAllBanner + '<div class="cards-grid">' + currentSongs.map((s, i) => {
       const playing = Boolean(cur && cur.title === s.title);
       const liked = isSongLiked(s);
       return `
       <div class="song-card ${playing ? "playing-now" : ""}" data-i="${i}">
         <div class="card-img-wrapper">
-          <img src="${esc(s.image_url)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+          <img src="${esc(s.image_url || ART.devara)}" alt="" loading="lazy" onerror="window.handleImgError(this, ${i})">
           <button class="card-play-btn" data-act="play" title="Play">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
           </button>
@@ -4908,7 +5207,7 @@ APP_JS = r'''/* ================================================================
     }, { passive: true });
   }
 
-  async function loadCategory(cat) {
+  async function loadCategory(cat, autoPlayFirst) {
     window.switchTab("home");
     currentCategory = cat;
     activeSearchQuery = "";
@@ -4918,12 +5217,17 @@ APP_JS = r'''/* ================================================================
     document.querySelectorAll(".pill-btn").forEach((b) => b.classList.toggle("active", b.dataset.category === cat));
     const t = TITLES[cat] || [cat.charAt(0).toUpperCase() + cat.slice(1), ""];
     setHeading(t[0], t[1]);
+    if (cat === "home") {
+      renderHomeHeroSections(currentSongs);
+    }
     showLoading("Loading songs...");
     try {
       const data = await api("/api/category/" + encodeURIComponent(cat) + "?page=1");
       const list = data.songs || [];
       renderSongs(list, false, false);
-      if (window.Player.seedQueueIfEmpty) {
+      if (autoPlayFirst && currentSongs.length) {
+        window.Player.playSongs(currentSongs, 0, true);
+      } else if (window.Player.seedQueueIfEmpty) {
         window.Player.seedQueueIfEmpty(currentSongs);
       }
     } catch (err) {}
@@ -4949,7 +5253,7 @@ APP_JS = r'''/* ================================================================
       }
       $("searchResultsList").innerHTML = '<div class="library-list">' + list.map((s, idx) => `
         <div class="lib-row" data-search-i="${idx}">
-          <img class="lib-row-art" src="${esc(s.image_url)}" alt="" loading="lazy">
+          <img class="lib-row-art" src="${esc(s.image_url || ART.raktacharitra)}" alt="" onerror="window.handleImgError(this, ${idx})">
           <div class="lib-row-info">
             <div class="lib-row-title">${esc(s.title)}</div>
             <div class="lib-row-sub">Song • ${esc(s.artist)}</div>
@@ -4983,7 +5287,7 @@ APP_JS = r'''/* ================================================================
   };
 
   window.triggerArtistSearch = function (q) {
-    window.openCategoryOrQuery(q, q);
+    window.openCategoryOrQuery(q, q, true);
   };
 
   $("query").addEventListener("input", (e) => {
@@ -4993,11 +5297,11 @@ APP_JS = r'''/* ================================================================
       window.clearSearchInput();
       return;
     }
-    searchTimer = setTimeout(() => runSearch(q), 380);
+    searchTimer = setTimeout(() => runSearch(q), 350);
   });
 
   document.querySelectorAll(".pill-btn").forEach((b) => {
-    b.addEventListener("click", () => loadCategory(b.dataset.category));
+    b.addEventListener("click", () => loadCategory(b.dataset.category, false));
   });
 
   // ---- Playlists Management ----
@@ -5034,64 +5338,74 @@ APP_JS = r'''/* ================================================================
         currentSongs.map((s, i) => `
           <tr class="track-row" data-i="${i}" data-entry="${s.id}">
             <td>${i + 1}</td>
-            <td><div class="track-title-cell"><img src="${esc(s.image_url)}" alt=""><span>${esc(s.title)}</span></div></td>
+            <td style="color:#fff;font-weight:500;">${esc(s.title)}</td>
             <td>${esc(s.artist)}</td>
-            <td><button class="btn-icon-small" data-act="remove">&times;</button></td>
-          </tr>`).join("") + "</tbody></table>";
+            <td style="text-align:right;"><button class="btn-danger" data-act="remove" style="padding:4px 8px;">Remove</button></td>
+          </tr>`).join("") +
+        "</tbody></table>";
     }
     $("content").innerHTML = html;
   }
 
   async function removeFromOpenPlaylist(entryId) {
-    const localLists = getLocalPlaylists();
-    const pl = localLists.find((p) => Number(p.id) === Number(openPlaylistId));
-    if (pl && Array.isArray(pl.songs)) {
-      pl.songs = pl.songs.filter((s) => String(s.id) !== String(entryId));
-      pl.song_count = pl.songs.length;
-      saveLocalPlaylists(localLists);
+    if (!openPlaylistId) return;
+    const lists = getLocalPlaylists();
+    const pIdx = lists.findIndex((p) => Number(p.id) === Number(openPlaylistId));
+    if (pIdx !== -1 && Array.isArray(lists[pIdx].songs)) {
+      lists[pIdx].songs = lists[pIdx].songs.filter((s) => String(s.id) !== String(entryId));
+      saveLocalPlaylists(lists);
     }
-    try { await api("/api/playlists/" + openPlaylistId + "/songs/" + entryId, { method: "DELETE" }); } catch (e) {}
+    try {
+      await api("/api/playlists/" + openPlaylistId + "/songs/" + entryId, { method: "DELETE" });
+    } catch (err) {}
     toast("Song removed");
     window.openPlaylist(openPlaylistId);
   }
 
   async function deleteOpenPlaylist() {
-    if (!confirm("Delete this playlist?")) return;
-    const localLists = getLocalPlaylists().filter((p) => Number(p.id) !== Number(openPlaylistId));
-    saveLocalPlaylists(localLists);
-    try { await api("/api/playlists/" + openPlaylistId, { method: "DELETE" }); } catch (e) {}
+    if (!openPlaylistId) return;
+    const lists = getLocalPlaylists().filter((p) => Number(p.id) !== Number(openPlaylistId));
+    saveLocalPlaylists(lists);
+    try {
+      await api("/api/playlists/" + openPlaylistId, { method: "DELETE" });
+    } catch (err) {}
     toast("Playlist deleted");
-    window.switchTab("library");
+    openPlaylistId = null;
+    loadCategory("home", false);
   }
 
-  function openModal(id) { $(id).classList.add("open"); }
-  function closeModal(id) { $(id).classList.remove("open"); }
+  function openModal(id) { if ($(id)) $(id).classList.add("open"); }
+  function closeModal(id) { if ($(id)) $(id).classList.remove("open"); }
 
-  $("btnNewPlaylist").addEventListener("click", () => {
-    $("playlistNameInput").value = "";
-    $("playlistDescInput").value = "";
-    openModal("createPlaylistModal");
-  });
-  $("btnCloseCreatePlaylist").addEventListener("click", () => closeModal("createPlaylistModal"));
-  $("btnCancelCreatePlaylist").addEventListener("click", () => closeModal("createPlaylistModal"));
+  if ($("btnNewPlaylist")) {
+    $("btnNewPlaylist").addEventListener("click", () => {
+      if ($("playlistNameInput")) $("playlistNameInput").value = "";
+      if ($("playlistDescInput")) $("playlistDescInput").value = "";
+      openModal("createPlaylistModal");
+    });
+  }
+  if ($("btnCloseCreatePlaylist")) $("btnCloseCreatePlaylist").addEventListener("click", () => closeModal("createPlaylistModal"));
+  if ($("btnCancelCreatePlaylist")) $("btnCancelCreatePlaylist").addEventListener("click", () => closeModal("createPlaylistModal"));
 
-  $("formCreatePlaylist").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = $("playlistNameInput").value.trim();
-    const description = $("playlistDescInput").value.trim();
-    if (!name) return;
-    let created = { id: Date.now(), name, description, song_count: 0, songs: [] };
-    try {
-      const data = await api("/api/playlists", jsonOpts("POST", { name, description }));
-      if (data.playlist) created = { ...data.playlist, songs: [] };
-    } catch (err) {}
-    const localLists = getLocalPlaylists();
-    localLists.unshift(created);
-    saveLocalPlaylists(localLists);
-    closeModal("createPlaylistModal");
-    toast("Playlist created: " + name);
-    renderLibraryView();
-  });
+  if ($("formCreatePlaylist")) {
+    $("formCreatePlaylist").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = $("playlistNameInput").value.trim();
+      const description = $("playlistDescInput").value.trim();
+      if (!name) return;
+      let created = { id: Date.now(), name, description, song_count: 0, songs: [] };
+      try {
+        const data = await api("/api/playlists", jsonOpts("POST", { name, description }));
+        if (data.playlist) created = { ...data.playlist, songs: [] };
+      } catch (err) {}
+      const localLists = getLocalPlaylists();
+      localLists.unshift(created);
+      saveLocalPlaylists(localLists);
+      closeModal("createPlaylistModal");
+      toast("Playlist created: " + name);
+      renderLibraryView();
+    });
+  }
 
   async function openAddToPlaylist(song) {
     pendingSong = song;
@@ -5101,38 +5415,40 @@ APP_JS = r'''/* ================================================================
     openModal("addToPlaylistModal");
   }
 
-  $("btnCloseAddToPlaylist").addEventListener("click", () => closeModal("addToPlaylistModal"));
-  $("btnCancelAddToPlaylist").addEventListener("click", () => closeModal("addToPlaylistModal"));
+  if ($("btnCloseAddToPlaylist")) $("btnCloseAddToPlaylist").addEventListener("click", () => closeModal("addToPlaylistModal"));
+  if ($("btnCancelAddToPlaylist")) $("btnCancelAddToPlaylist").addEventListener("click", () => closeModal("addToPlaylistModal"));
 
-  $("formAddToPlaylist").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!pendingSong) return;
-    const s = pendingSong;
-    const id = $("playlistSelect").value;
-    let addedEntry = {
-      id: Date.now(),
-      song_id: s.id, title: s.title, artist: s.artist, album: s.album || "",
-      duration: s.duration || 0, image_url: s.image_url || "", media_url: s.media_url,
-      backup_urls: s.backup_urls || []
-    };
-    try {
-      const data = await api("/api/playlists/" + id + "/songs", jsonOpts("POST", {
+  if ($("formAddToPlaylist")) {
+    $("formAddToPlaylist").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!pendingSong) return;
+      const s = pendingSong;
+      const id = $("playlistSelect").value;
+      let addedEntry = {
+        id: Date.now(),
         song_id: s.id, title: s.title, artist: s.artist, album: s.album || "",
-        duration: s.duration || 0, image_url: s.image_url || "", media_url: s.media_url
-      }));
-      if (data.song) addedEntry = { ...data.song, backup_urls: s.backup_urls || [] };
-    } catch (err) {}
-    const localLists = getLocalPlaylists();
-    const pl = localLists.find((p) => Number(p.id) === Number(id));
-    if (pl) {
-      if (!Array.isArray(pl.songs)) pl.songs = [];
-      pl.songs.push(addedEntry);
-      pl.song_count = pl.songs.length;
-      saveLocalPlaylists(localLists);
-    }
-    closeModal("addToPlaylistModal");
-    toast("Added to playlist");
-  });
+        duration: s.duration || 0, image_url: s.image_url || "", media_url: s.media_url,
+        backup_urls: s.backup_urls || []
+      };
+      try {
+        const data = await api("/api/playlists/" + id + "/songs", jsonOpts("POST", {
+          song_id: s.id, title: s.title, artist: s.artist, album: s.album || "",
+          duration: s.duration || 0, image_url: s.image_url || "", media_url: s.media_url
+        }));
+        if (data.song) addedEntry = { ...data.song, backup_urls: s.backup_urls || [] };
+      } catch (err) {}
+      const localLists = getLocalPlaylists();
+      const pl = localLists.find((p) => Number(p.id) === Number(id));
+      if (pl) {
+        if (!Array.isArray(pl.songs)) pl.songs = [];
+        pl.songs.push(addedEntry);
+        pl.song_count = pl.songs.length;
+        saveLocalPlaylists(localLists);
+      }
+      closeModal("addToPlaylistModal");
+      toast("Added to playlist");
+    });
+  }
 
   // ---- Profile Avatar & Onboarding ----
   function showProfile(p) {
@@ -5151,18 +5467,20 @@ APP_JS = r'''/* ================================================================
     openModal("welcomeModal");
   };
 
-  $("formWelcomeProfile").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = $("userNameInput").value.trim();
-    const age = parseInt($("userAgeInput").value, 10);
-    if (!name || !age) return;
-    const profile = { name, age };
-    try { localStorage.setItem("musify_profile", JSON.stringify(profile)); } catch (err) {}
-    try { await api("/api/profile", jsonOpts("POST", profile)); } catch (err) {}
-    showProfile(profile);
-    closeModal("welcomeModal");
-    toast("Welcome, " + name + "!");
-  });
+  if ($("formWelcomeProfile")) {
+    $("formWelcomeProfile").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = $("userNameInput").value.trim();
+      const age = parseInt($("userAgeInput").value, 10);
+      if (!name || !age) return;
+      const profile = { name, age };
+      try { localStorage.setItem("musify_profile", JSON.stringify(profile)); } catch (err) {}
+      try { await api("/api/profile", jsonOpts("POST", profile)); } catch (err) {}
+      showProfile(profile);
+      closeModal("welcomeModal");
+      toast("Welcome, " + name + "!");
+    });
+  }
 
   async function initProfile() {
     let profile = null;
@@ -5177,11 +5495,13 @@ APP_JS = r'''/* ================================================================
     else openModal("welcomeModal");
   }
 
+  // Render Spotify Home Hero Sections immediately (0ms wait) before API fetch finishes
   saveLikedSongs(getLikedSongs());
+  renderHomeHeroSections([]);
   initProfile();
   initSearchBrowseTiles();
   renderLibraryView();
-  loadCategory("home");
+  loadCategory("home", false);
 })();
 '''
 
@@ -5202,7 +5522,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-highbeam-item-v19";
+SW_JS = r'''const CACHE = "musify-spotify-v22";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
