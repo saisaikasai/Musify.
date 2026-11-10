@@ -1735,7 +1735,7 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    cache_key = f"search_v27::{clean_q.lower()}::p{page}"
+    cache_key = f"search_v28::{clean_q.lower()}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1773,7 +1773,7 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     English (Ed Sheeran, The Weeknd), and Hindi hits in parallel.
     """
     cat = category.lower().strip()
-    cache_key = f"cat_v27::{cat}::p{page}"
+    cache_key = f"cat_v28::{cat}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -2235,7 +2235,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=27">
+  <link rel="stylesheet" href="/static/css/style.css?v=28">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -2471,8 +2471,8 @@ INDEX_HTML = r'''<!DOCTYPE html>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             <span>Download</span>
           </button>
-          <button class="np-icon-btn" onclick="openAddToPlaylistCurrent()" title="Add to Playlist">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          <button class="np-icon-btn" onclick="openThreeDotsMenuCurrent()" title="More Options & Playlists" style="background:rgba(255,255,255,0.14);padding:7px;border-radius:50%;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="5" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="12" cy="19" r="2.2"/></svg>
           </button>
         </div>
       </div>
@@ -2633,17 +2633,97 @@ INDEX_HTML = r'''<!DOCTYPE html>
     </button>
   </nav>
 
-  <!-- Modals -->
+  <!-- Modals (High z-index so they always open above Full-Screen Player & Queue) -->
+  <div id="threeDotsModal" class="modal-overlay" onclick="if(event.target===this) closeThreeDotsMenu()">
+    <div class="modal-card three-dots-sheet">
+      <div class="three-dots-song-header">
+        <img id="tdSongImg" src="" alt="" onerror="window.handleImgError && window.handleImgError(this, 0)">
+        <div class="three-dots-song-meta">
+          <div id="tdSongTitle" class="three-dots-title">Song Title</div>
+          <div id="tdSongArtist" class="three-dots-sub">Artist</div>
+        </div>
+        <button class="btn-icon-small" onclick="closeThreeDotsMenu()">&times;</button>
+      </div>
+
+      <div class="three-dots-options-list">
+        <button class="td-option-row" onclick="toggleScreenOffKeepAliveFromMenu()">
+          <span class="td-opt-icon" style="color:#1db954;">🔒</span>
+          <div class="td-opt-text">
+            <div id="tdScreenOffLabel" class="td-opt-main">Screen-Off Background Play: ON</div>
+            <div class="td-opt-sub">Keeps music playing continuously when phone screen is locked</div>
+          </div>
+          <span id="tdScreenOffBadge" class="td-status-pill">ACTIVE</span>
+        </button>
+
+        <button class="td-option-row" onclick="closeThreeDotsMenu(); openAddToPlaylistFromMenu()">
+          <span class="td-opt-icon">➕</span>
+          <div class="td-opt-text">
+            <div class="td-opt-main">Add to Playlist</div>
+            <div class="td-opt-sub">Save this song to an existing or new playlist</div>
+          </div>
+        </button>
+
+        <button class="td-option-row" onclick="closeThreeDotsMenu(); openCreatePlaylistWithMenuSong()">
+          <span class="td-opt-icon">🎵</span>
+          <div class="td-opt-text">
+            <div class="td-opt-main">Create New Playlist with This Song</div>
+            <div class="td-opt-sub">Make your own custom playlist and start listening</div>
+          </div>
+        </button>
+
+        <button class="td-option-row" onclick="closeThreeDotsMenu(); goToUserPlaylists()">
+          <span class="td-opt-icon">📂</span>
+          <div class="td-opt-text">
+            <div class="td-opt-main">My Playlists (Listen to Saved Playlists)</div>
+            <div class="td-opt-sub">Open Your Library to play your custom playlists</div>
+          </div>
+        </button>
+
+        <button class="td-option-row" onclick="closeThreeDotsMenu(); toggleLikeMenuSong()">
+          <span class="td-opt-icon" style="color:#1db954;">♥</span>
+          <div class="td-opt-text">
+            <div class="td-opt-main">Save to Liked Songs</div>
+            <div class="td-opt-sub">Pin to your Liked Songs collection</div>
+          </div>
+        </button>
+
+        <button class="td-option-row" onclick="closeThreeDotsMenu(); downloadMenuSong()">
+          <span class="td-opt-icon">⬇</span>
+          <div class="td-opt-text">
+            <div class="td-opt-main">Download Full Song (.m4a)</div>
+            <div class="td-opt-sub">Save offline to your device</div>
+          </div>
+        </button>
+
+        <button class="td-option-row" onclick="closeThreeDotsMenu(); scrollToLyricsCard()">
+          <span class="td-opt-icon">🎤</span>
+          <div class="td-opt-text">
+            <div class="td-opt-main">Show Voice-Synced Lyrics</div>
+            <div class="td-opt-sub">Jump to live karaoke lyrics</div>
+          </div>
+        </button>
+
+        <button class="td-option-row" onclick="closeThreeDotsMenu(); document.getElementById('queuePanel').classList.add('open')">
+          <span class="td-opt-icon">☰</span>
+          <div class="td-opt-text">
+            <div class="td-opt-main">Open Upcoming Queue</div>
+            <div class="td-opt-sub">View & reorder upcoming songs</div>
+          </div>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div id="createPlaylistModal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>Create Playlist</h3>
+        <h3>Create Your Own Playlist</h3>
         <button id="btnCloseCreatePlaylist" class="btn-icon-small">&times;</button>
       </div>
       <form id="formCreatePlaylist">
         <div class="form-group">
           <label for="playlistNameInput">Playlist Name *</label>
-          <input type="text" id="playlistNameInput" placeholder="e.g. High beam, Telugu Vibes" required>
+          <input type="text" id="playlistNameInput" placeholder="e.g. My Bus Songs, High Beam Mix, Favourites" required>
         </div>
         <div class="form-group">
           <label for="playlistDescInput">Description (Optional)</label>
@@ -2651,7 +2731,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
         </div>
         <div class="modal-actions">
           <button type="button" id="btnCancelCreatePlaylist" class="btn-secondary">Cancel</button>
-          <button type="submit" class="btn-primary">Create</button>
+          <button type="submit" class="btn-primary">Create & Open Playlist</button>
         </div>
       </form>
     </div>
@@ -2660,19 +2740,30 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="addToPlaylistModal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>Add to Playlist</h3>
+        <h3>Add Song to Playlist</h3>
         <button id="btnCloseAddToPlaylist" class="btn-icon-small">&times;</button>
       </div>
-      <form id="formAddToPlaylist">
-        <div class="form-group">
-          <label for="playlistSelect">Choose Playlist</label>
-          <select id="playlistSelect" required></select>
-        </div>
-        <div class="modal-actions">
-          <button type="button" id="btnCancelAddToPlaylist" class="btn-secondary">Cancel</button>
-          <button type="submit" class="btn-primary">Add Song</button>
-        </div>
+      <div id="addSongTargetLabel" style="font-size:12.5px;color:#1db954;font-weight:700;margin-bottom:4px;"></div>
+
+      <!-- Tap any existing playlist to add immediately -->
+      <div id="quickPlaylistTapList" style="display:flex;flex-direction:column;gap:8px;max-height:170px;overflow-y:auto;"></div>
+
+      <form id="formAddToPlaylist" style="display:none;">
+        <select id="playlistSelect"></select>
       </form>
+
+      <!-- Or Create a Brand-New Playlist & Add Song in 1 Tap -->
+      <div style="border-top:1px solid rgba(255,255,255,0.12);padding-top:12px;margin-top:4px;">
+        <div style="font-size:12px;color:var(--text-muted);font-weight:700;margin-bottom:8px;">OR CREATE A NEW PLAYLIST RIGHT NOW:</div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="quickNewPlaylistName" placeholder="New playlist name..." style="flex:1;background:#121212;border:1px solid rgba(255,255,255,0.2);border-radius:8px;padding:10px;color:#fff;font-size:13px;">
+          <button type="button" id="btnQuickCreateAndAdd" class="btn-primary" style="white-space:nowrap;padding:10px 14px;">+ Create & Add</button>
+        </div>
+      </div>
+
+      <div class="modal-actions" style="margin-top:6px;">
+        <button type="button" id="btnCancelAddToPlaylist" class="btn-secondary" style="width:100%;justify-content:center;">Close</button>
+      </div>
     </div>
   </div>
 
@@ -2703,19 +2794,19 @@ INDEX_HTML = r'''<!DOCTYPE html>
 
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/js/player.js?v=27"></script>
-  <script src="/static/js/app.js?v=27"></script>
+  <script src="/static/js/player.js?v=28"></script>
+  <script src="/static/js/app.js?v=28"></script>
   <script>
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-spotify-v27") caches.delete(k);
+          if (k !== "musify-spotify-v28") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=27").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=28").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -4211,14 +4302,142 @@ html, body {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.8);
+  background: rgba(0,0,0,0.84);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 110;
+  z-index: 10000;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s;
+}
+
+.three-dots-sheet {
+  max-width: 430px;
+  width: 94%;
+  max-height: 86vh;
+  overflow-y: auto;
+  background: #1e1e1e;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 18px;
+  padding: 16px;
+}
+
+.three-dots-song-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.three-dots-song-header img {
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.three-dots-song-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.three-dots-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.three-dots-sub {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.three-dots-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.td-option-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 11px 10px;
+  border-radius: 10px;
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.td-option-row:active, .td-option-row:hover {
+  background: rgba(255,255,255,0.08);
+}
+
+.td-opt-icon {
+  font-size: 19px;
+  width: 26px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.td-opt-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.td-opt-main {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.td-opt-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.td-status-pill {
+  background: rgba(29, 185, 84, 0.2);
+  color: #1db954;
+  border: 1px solid #1db954;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.quick-pl-item-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: #2a2a2a;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 11px 14px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quick-pl-item-btn:active {
+  background: #1db954;
+  color: #000;
 }
 
 .modal-overlay.open {
@@ -4284,7 +4503,7 @@ html, body {
   bottom: 120px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 130;
+  z-index: 10005;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4322,6 +4541,58 @@ PLAYER_JS = r'''/* =============================================================
   preloadAudio.muted = true;
   preloadAudio.style.display = "none";
   document.body.appendChild(preloadAudio);
+
+  // Screen-Off Continuous Keep-Alive Bridge (1-second valid PCM WAV silence loop + Web Audio oscillator)
+  // Holds Android/iOS hardware audio focus continuously across song transitions when the phone screen is OFF!
+  const SILENT_WAV_URI = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+  const keepAliveAudio = document.createElement("audio");
+  keepAliveAudio.src = SILENT_WAV_URI;
+  keepAliveAudio.loop = true;
+  keepAliveAudio.volume = 0.01;
+  keepAliveAudio.setAttribute("playsinline", "");
+  keepAliveAudio.style.display = "none";
+  document.body.appendChild(keepAliveAudio);
+
+  let audioCtx = null;
+  let keepAliveOsc = null;
+  window.screenOffLockEnabled = true;
+
+  function startScreenOffBridge() {
+    if (!window.screenOffLockEnabled) return;
+    try {
+      if (keepAliveAudio.paused) {
+        keepAliveAudio.play().catch(() => {});
+      }
+    } catch (e) {}
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        if (!audioCtx) {
+          audioCtx = new Ctx();
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          gain.gain.value = 0.0001;
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start();
+          keepAliveOsc = osc;
+        }
+        if (audioCtx.state === "suspended") {
+          audioCtx.resume().catch(() => {});
+        }
+      }
+    } catch (e) {}
+  }
+
+  function stopScreenOffBridge() {
+    try { keepAliveAudio.pause(); } catch (e) {}
+    try {
+      if (audioCtx && audioCtx.state === "running") {
+        audioCtx.suspend().catch(() => {});
+      }
+    } catch (e) {}
+  }
+  window.startScreenOffBridge = startScreenOffBridge;
 
   const ICON_PLAY_MINI = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>';
   const ICON_PAUSE_MINI = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
@@ -4837,17 +5108,20 @@ PLAYER_JS = r'''/* =============================================================
     state.lastObservedTime = resumeAtSec || 0;
     state.stallTicks = 0;
 
+    // Activate Screen-Off Keep-Alive Bridge BEFORE switching src so Android never drops lock-screen AudioFocus!
+    startScreenOffBridge();
+
     const urls = urlsFor(s);
     if (!urls.length) {
       resolveFreshAndPlay(s);
       return;
     }
     const chosenUrl = urls[Math.min(state.urlTry, urls.length - 1)];
-    try { audio.pause(); } catch (e) {}
+    // CRITICAL FOR SCREEN-OFF PLAYBACK: Do NOT call audio.pause() before setting audio.src!
+    // Calling audio.pause() while document.hidden is true revokes Android OS AudioFocus!
     audio.autoplay = true;
     audio.volume = 1.0;
     audio.src = chosenUrl;
-    try { audio.load(); } catch (e) {}
     attemptPlayAudio(resumeAtSec || 0);
 
     if ("mediaSession" in navigator) {
@@ -4999,9 +5273,11 @@ PLAYER_JS = r'''/* =============================================================
     if (!audio.src) { startAudio(0); return; }
     if (audio.paused) {
       state.wantPlaying = true;
+      startScreenOffBridge();
       attemptPlayAudio();
     } else {
       state.wantPlaying = false;
+      stopScreenOffBridge();
       audio.pause();
     }
   }
@@ -5171,10 +5447,19 @@ PLAYER_JS = r'''/* =============================================================
   };
 
   window.Player = {
-    playSongs(songs, startIndex, openFull, isFromSearch) {
+    playSongs(songs, startIndex, openFull, isFromSearch, isUserPlaylist) {
       const rawList = (songs && songs.length) ? songs.slice() : [];
       const chosen = rawList[startIndex || 0];
       if (!chosen) return;
+
+      if (isUserPlaylist) {
+        // User's own custom playlist or Liked Songs: keep all tracks in exact playlist order!
+        state.playedKeys.clear();
+        state.queue = rawList;
+        playAt(startIndex || 0, false);
+        if (openFull) window.openNowPlayingSheet();
+        return;
+      }
 
       const chosenKey = canonicalSongKey(chosen);
       const chosenMainArtist = String(chosen.artist || "").split(",")[0].trim().toLowerCase();
@@ -5187,8 +5472,6 @@ PLAYER_JS = r'''/* =============================================================
         const ik = canonicalSongKey(item);
         if (!ik || seen.has(ik) || hasSongBeenPlayed(item)) return;
         const itemArtist = String(item.artist || "").split(",")[0].trim().toLowerCase();
-        // If playing a specific singer (like Sai Abhyankkar), cap consecutive initial queue tracks by the same artist to 2
-        // so Telugu Auto-Radio suggestions mix in immediately!
         if (chosenMainArtist && itemArtist === chosenMainArtist) {
           if (sameArtistCount >= 2) return;
           sameArtistCount += 1;
@@ -5201,7 +5484,6 @@ PLAYER_JS = r'''/* =============================================================
       for (let i = 0; i < (startIndex || 0); i++) addCandidate(rawList[i]);
 
       state.queue = cleanQueue;
-      // Always trigger Telugu-First Smart Radio prefetch so Telugu suggestions are queued right after!
       playAt(0, true);
       if (openFull) window.openNowPlayingSheet();
     },
@@ -5321,16 +5603,20 @@ PLAYER_JS = r'''/* =============================================================
     }
   }, 1000);
 
-  // ---- Background Home Play vs. Recent Apps Close Handler ----
+  // ---- Screen-Off & Background Play vs. Recent Apps Close Handler ----
   document.addEventListener("visibilitychange", () => {
     state.lastVisibilityChange = Date.now();
     if (document.hidden) {
-      if (state.wantPlaying && audio.paused) {
-        audio.play().catch(() => {});
+      // Screen turned OFF or user pressed Home button: keep Screen-Off Bridge & audio playing!
+      if (state.wantPlaying) {
+        startScreenOffBridge();
+        if (audio.paused && !audio.ended) {
+          audio.play().catch(() => {});
+        }
       }
     } else {
       acquireWakeLock();
-      if (state.wantPlaying && audio.paused) {
+      if (state.wantPlaying && audio.paused && !audio.ended) {
         audio.play().catch(() => {});
       }
     }
@@ -5338,10 +5624,10 @@ PLAYER_JS = r'''/* =============================================================
 
   function stopAudioOnAppTermination() {
     state.wantPlaying = false;
+    stopScreenOffBridge();
     try {
       audio.pause();
       audio.removeAttribute("src");
-      audio.load();
       if ("mediaSession" in navigator) {
         navigator.mediaSession.playbackState = "none";
         navigator.mediaSession.metadata = null;
@@ -5349,8 +5635,8 @@ PLAYER_JS = r'''/* =============================================================
     } catch (e) {}
   }
 
-  window.addEventListener("pagehide", stopAudioOnAppTermination);
-  window.addEventListener("beforeunload", stopAudioOnAppTermination);
+  // Note: Do NOT attach to `pagehide` because locking the phone screen fires `pagehide` on mobile browsers!
+  // Only `unload` fires when the tab/app is actually swiped away from Recent Apps.
   window.addEventListener("unload", stopAudioOnAppTermination);
 
   audio.addEventListener("ended", () => {
@@ -5372,9 +5658,16 @@ PLAYER_JS = r'''/* =============================================================
 
       syncLyricsToTime(curT);
 
-      // Pre-buffer the next song once current song passes 60% so song transition is 0ms on a bus!
-      if (pct >= 60) {
+      // Pre-buffer the next song once current song passes 55% so song transition is 0ms on a bus or with screen off!
+      if (pct >= 55) {
         preloadNextUpcomingSong();
+      }
+
+      // CRITICAL FOR SCREEN-OFF PLAYBACK: When the screen is OFF (document.hidden), transition 0.85s BEFORE `ended`
+      // while the hardware audio decoder is still actively running so Android OS never suspends between tracks!
+      if (document.hidden && dur > 15 && (dur - curT) <= 0.85) {
+        next(true, false);
+        return;
       }
 
       // Throttle Android MediaSession position IPC to once every 5000ms (fixes audio cutting out after 2-3 songs!)
@@ -6245,13 +6538,13 @@ APP_JS = r'''/* ================================================================
     if (row) {
       const i = parseInt(row.dataset.i, 10);
       if (e.target.closest("[data-act='remove']")) { removeFromOpenPlaylist(row.dataset.entry); return; }
-      window.Player.playSongs(currentSongs, i, true);
+      window.Player.playSongs(currentSongs, i, true, false, true);
       return;
     }
 
     if (e.target.closest("#btnPlayAll")) {
-      if (currentSongs.length) window.Player.playSongs(currentSongs, 0, true);
-      else toast("This playlist is empty");
+      if (currentSongs.length) window.Player.playSongs(currentSongs, 0, true, false, Boolean(openPlaylistId));
+      else toast("Add a song to your playlist first!");
     } else if (e.target.closest("#btnDeletePlaylist")) {
       deleteOpenPlaylist();
     } else if (e.target.closest("#btnLoadMore")) {
@@ -6352,11 +6645,21 @@ APP_JS = r'''/* ================================================================
           <button class="mini-icon-btn" data-search-dl="${idx}" title="Download" style="padding:8px;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b3b3b3" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </button>
+          <button class="mini-icon-btn" data-search-dots="${idx}" title="More Options & Add to Playlist" style="padding:8px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="#b3b3b3"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          </button>
         </div>`).join("") + '</div>';
     } catch (err) {}
   }
 
   $("searchResultsList").addEventListener("click", (e) => {
+    const dotsBtn = e.target.closest("[data-search-dots]");
+    if (dotsBtn) {
+      e.stopPropagation();
+      const idx = parseInt(dotsBtn.getAttribute("data-search-dots"), 10);
+      if (currentSongs[idx]) window.openThreeDotsMenu(currentSongs[idx]);
+      return;
+    }
     const dlBtn = e.target.closest("[data-search-dl]");
     if (dlBtn) {
       e.stopPropagation();
@@ -6395,81 +6698,262 @@ APP_JS = r'''/* ================================================================
     b.addEventListener("click", () => loadCategory(b.dataset.category, false));
   });
 
-  // ---- Playlists Management ----
+  // ---- Three-Dots Options Menu & Full Custom Playlist Builder ----
+  let menuTargetSong = null;
+  let createPlaylistSeedSong = null;
+
+  function openModal(id) { if ($(id)) $(id).classList.add("open"); }
+  function closeModal(id) { if ($(id)) $(id).classList.remove("open"); }
+
+  window.openThreeDotsMenu = function (song) {
+    const s = song || window.Player.currentSong() || (currentSongs && currentSongs[0]);
+    if (!s) {
+      toast("Tap any song first");
+      return;
+    }
+    menuTargetSong = s;
+    if ($("tdSongImg")) $("tdSongImg").src = s.image_url || ART.devara;
+    if ($("tdSongTitle")) $("tdSongTitle").textContent = s.title || "Song";
+    if ($("tdSongArtist")) $("tdSongArtist").textContent = s.artist || "Artist";
+    const lockOn = window.screenOffLockEnabled !== false;
+    if ($("tdScreenOffLabel")) {
+      $("tdScreenOffLabel").textContent = "Screen-Off Background Play: " + (lockOn ? "ON" : "OFF");
+    }
+    if ($("tdScreenOffBadge")) {
+      $("tdScreenOffBadge").textContent = lockOn ? "ACTIVE" : "OFF";
+      $("tdScreenOffBadge").style.opacity = lockOn ? "1" : "0.5";
+    }
+    openModal("threeDotsModal");
+  };
+
+  window.openThreeDotsMenuCurrent = function () {
+    window.openThreeDotsMenu(window.Player.currentSong());
+  };
+
+  window.closeThreeDotsMenu = function () {
+    closeModal("threeDotsModal");
+  };
+
+  window.toggleScreenOffKeepAliveFromMenu = function () {
+    window.screenOffLockEnabled = !window.screenOffLockEnabled;
+    if (window.screenOffLockEnabled && window.startScreenOffBridge) {
+      window.startScreenOffBridge();
+      toast("🔒 Screen-Off Continuous Play Enabled!");
+    } else {
+      toast("Screen-Off Lock Paused");
+    }
+    window.openThreeDotsMenu(menuTargetSong);
+  };
+
+  window.openAddToPlaylistFromMenu = function () {
+    const s = menuTargetSong || window.Player.currentSong();
+    if (s) openAddToPlaylist(s);
+  };
+
+  window.openCreatePlaylistWithMenuSong = function () {
+    createPlaylistSeedSong = menuTargetSong || window.Player.currentSong();
+    if ($("playlistNameInput")) $("playlistNameInput").value = "";
+    if ($("playlistDescInput")) $("playlistDescInput").value = "";
+    openModal("createPlaylistModal");
+  };
+
+  window.goToUserPlaylists = function () {
+    window.closeNowPlayingSheet();
+    window.switchTab("library");
+  };
+
+  window.toggleLikeMenuSong = function () {
+    const s = menuTargetSong || window.Player.currentSong();
+    if (s) toggleLikeSong(s);
+  };
+
+  window.downloadMenuSong = function () {
+    const s = menuTargetSong || window.Player.currentSong();
+    if (s) window.downloadSongObj(s);
+  };
+
+  async function addSongToPlaylistById(playlistId, song) {
+    if (!song) return;
+    let addedEntry = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      song_id: song.id,
+      title: song.title,
+      artist: song.artist,
+      album: song.album || "",
+      duration: song.duration || 0,
+      image_url: song.image_url || ART.devara,
+      media_url: song.media_url,
+      backup_urls: song.backup_urls || []
+    };
+    try {
+      const data = await api("/api/playlists/" + playlistId + "/songs", jsonOpts("POST", {
+        song_id: song.id,
+        title: song.title,
+        artist: song.artist,
+        album: song.album || "",
+        duration: song.duration || 0,
+        image_url: song.image_url || "",
+        media_url: song.media_url
+      }));
+      if (data && data.song) addedEntry = { ...data.song, backup_urls: song.backup_urls || [] };
+    } catch (err) {}
+
+    const localLists = getLocalPlaylists();
+    const pl = localLists.find((p) => String(p.id) === String(playlistId));
+    if (pl) {
+      if (!Array.isArray(pl.songs)) pl.songs = [];
+      pl.songs.push(addedEntry);
+      pl.song_count = pl.songs.length;
+      saveLocalPlaylists(localLists);
+      toast('✅ Added "' + song.title + '" to ' + pl.name);
+    } else {
+      toast("Added to playlist!");
+    }
+    renderLibraryView();
+  }
+
   window.openPlaylist = async function (id) {
+    window.closeNowPlayingSheet();
     window.switchTab("home");
     openPlaylistId = id;
+    activeSearchQuery = "";
     $("homeHeroSections").style.display = "none";
+    document.querySelectorAll(".pill-btn").forEach((b) => b.classList.remove("active"));
+
     const localLists = getLocalPlaylists();
-    const localMatch = localLists.find((p) => Number(p.id) === Number(id));
+    const localMatch = localLists.find((p) => String(p.id) === String(id));
+    if (localMatch) {
+      renderPlaylistContent(localMatch);
+      return;
+    }
     try {
       const data = await api("/api/playlists/" + id);
-      const p = data.playlist;
-      if (localMatch && (!p.songs || !p.songs.length) && localMatch.songs && localMatch.songs.length) {
-        p.songs = localMatch.songs;
+      if (data && data.playlist) {
+        renderPlaylistContent(data.playlist);
       }
-      renderPlaylistContent(p);
-      return;
     } catch (err) {}
-    if (localMatch) renderPlaylistContent(localMatch);
   };
 
   function renderPlaylistContent(p) {
-    currentSongs = p.songs || [];
-    setHeading(p.name, p.description || (currentSongs.length + " songs"));
+    currentSongs = Array.isArray(p.songs) ? p.songs : [];
+    const coverImg = (currentSongs[0] && currentSongs[0].image_url) || ART.devara;
+    setHeading(p.name || "My Playlist", (p.description ? p.description + " • " : "") + currentSongs.length + " songs in your playlist");
+
     let html = `
-      <div style="display:flex;gap:12px;margin-bottom:18px;">
-        <button class="btn-primary" id="btnPlayAll">▶ Play All</button>
-        <button class="btn-danger" id="btnDeletePlaylist">Delete Playlist</button>
+      <div style="display:flex;align-items:center;gap:14px;background:rgba(255,255,255,0.06);padding:14px;border-radius:14px;margin-bottom:16px;">
+        <img src="${esc(coverImg)}" alt="" style="width:74px;height:74px;border-radius:10px;object-fit:cover;flex-shrink:0;" onerror="window.handleImgError(this, 0)">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:11.5px;color:#1db954;font-weight:800;text-transform:uppercase;">Custom Playlist</div>
+          <div style="font-size:18px;font-weight:800;color:#fff;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</div>
+          <div style="font-size:12.5px;color:var(--text-muted);margin-top:2px;">${currentSongs.length} full-length songs • Plays back-to-back</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;">
+        <button class="btn-primary" id="btnPlayAll" style="border-radius:999px;padding:10px 22px;font-weight:800;">▶ Play My Playlist</button>
+        <button class="btn-secondary" id="btnAddMoreToPl" style="border-radius:999px;padding:10px 16px;font-weight:700;">➕ Add Songs</button>
+        <button class="btn-danger" id="btnDeletePlaylist" style="border-radius:999px;padding:10px 16px;">🗑 Delete</button>
       </div>`;
+
     if (!currentSongs.length) {
-      html += '<div style="color:var(--text-muted);">This playlist is empty. Tap +List on any song card to add tracks.</div>';
+      html += `
+        <div style="background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.15);border-radius:12px;padding:18px;margin-bottom:18px;color:var(--text-muted);font-size:13.5px;">
+          Your playlist <strong>${esc(p.name)}</strong> is ready! Tap <strong>+ Add</strong> on any song below (or search any song and tap <strong>⋮ / +List</strong>) to add songs and listen anytime.
+        </div>`;
     } else {
-      html += '<table class="track-table"><thead><tr><th>#</th><th>Title</th><th>Artist</th><th></th></tr></thead><tbody>' +
+      html += '<div class="library-list" style="margin-bottom:24px;">' +
         currentSongs.map((s, i) => `
-          <tr class="track-row" data-i="${i}" data-entry="${s.id}">
-            <td>${i + 1}</td>
-            <td style="color:#fff;font-weight:500;">${esc(s.title)}</td>
-            <td>${esc(s.artist)}</td>
-            <td style="text-align:right;"><button class="btn-danger" data-act="remove" style="padding:4px 8px;">Remove</button></td>
-          </tr>`).join("") +
-        "</tbody></table>";
+          <div class="lib-row track-row" data-i="${i}" data-entry="${s.id}" style="background:rgba(255,255,255,0.04);padding:8px 10px;border-radius:10px;">
+            <img class="lib-row-art" src="${esc(s.image_url || ART.devara)}" alt="" onerror="window.handleImgError(this, ${i})">
+            <div class="lib-row-info">
+              <div class="lib-row-title">${i + 1}. ${esc(s.title)}</div>
+              <div class="lib-row-sub">${esc(s.artist)}</div>
+            </div>
+            <button class="mini-icon-btn" data-act="remove" title="Remove from Playlist" style="color:#f15e6c;padding:8px;font-size:16px;font-weight:800;">&times;</button>
+          </div>`).join("") +
+        "</div>";
     }
+
+    // Inline Quick-Add Songs Picker so users can add songs directly inside their playlist!
+    const suggestions = (window.allLoadedSongs && window.allLoadedSongs.length) ? window.allLoadedSongs.slice(0, 18) : [];
+    if (suggestions.length) {
+      html += `
+        <div id="quickAddPickerSection" style="border-top:1px solid rgba(255,255,255,0.1);padding-top:16px;margin-top:8px;">
+          <h3 style="font-size:16px;font-weight:800;color:#fff;margin-bottom:4px;">Recommended Songs to Add</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Tap <strong>+ Add</strong> to add directly to ${esc(p.name)}</p>
+          <div class="library-list">
+            ${suggestions.map((sg, sIdx) => `
+              <div class="lib-row" style="padding:6px 4px;">
+                <img class="lib-row-art" src="${esc(sg.image_url || ART.devara)}" alt="" onerror="window.handleImgError(this, ${sIdx})">
+                <div class="lib-row-info">
+                  <div class="lib-row-title">${esc(sg.title)}</div>
+                  <div class="lib-row-sub">${esc(sg.artist)}</div>
+                </div>
+                <button class="btn-primary" data-quick-add-idx="${sIdx}" style="padding:6px 14px;border-radius:999px;font-size:12px;font-weight:800;">+ Add</button>
+              </div>`).join("")}
+          </div>
+        </div>`;
+    }
+
     $("content").innerHTML = html;
+
+    // Bind Quick-Add buttons inside playlist view
+    $("content").querySelectorAll("[data-quick-add-idx]").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        const idx = parseInt(btn.getAttribute("data-quick-add-idx"), 10);
+        const sg = suggestions[idx];
+        if (sg && openPlaylistId) {
+          await addSongToPlaylistById(openPlaylistId, sg);
+          window.openPlaylist(openPlaylistId);
+        }
+      });
+    });
+
+    const addMoreBtn = $("btnAddMoreToPl");
+    if (addMoreBtn) {
+      addMoreBtn.addEventListener("click", () => {
+        const picker = $("quickAddPickerSection");
+        if (picker) picker.scrollIntoView({ behavior: "smooth" });
+        else {
+          window.switchTab("search");
+          if ($("query")) $("query").focus();
+        }
+      });
+    }
   }
 
   async function removeFromOpenPlaylist(entryId) {
     if (!openPlaylistId) return;
     const lists = getLocalPlaylists();
-    const pIdx = lists.findIndex((p) => Number(p.id) === Number(openPlaylistId));
+    const pIdx = lists.findIndex((p) => String(p.id) === String(openPlaylistId));
     if (pIdx !== -1 && Array.isArray(lists[pIdx].songs)) {
       lists[pIdx].songs = lists[pIdx].songs.filter((s) => String(s.id) !== String(entryId));
+      lists[pIdx].song_count = lists[pIdx].songs.length;
       saveLocalPlaylists(lists);
     }
     try {
       await api("/api/playlists/" + openPlaylistId + "/songs/" + entryId, { method: "DELETE" });
     } catch (err) {}
-    toast("Song removed");
+    toast("Song removed from playlist");
     window.openPlaylist(openPlaylistId);
   }
 
   async function deleteOpenPlaylist() {
     if (!openPlaylistId) return;
-    const lists = getLocalPlaylists().filter((p) => Number(p.id) !== Number(openPlaylistId));
+    const lists = getLocalPlaylists().filter((p) => String(p.id) !== String(openPlaylistId));
     saveLocalPlaylists(lists);
     try {
       await api("/api/playlists/" + openPlaylistId, { method: "DELETE" });
     } catch (err) {}
     toast("Playlist deleted");
     openPlaylistId = null;
+    renderLibraryView();
     loadCategory("home", false);
   }
 
-  function openModal(id) { if ($(id)) $(id).classList.add("open"); }
-  function closeModal(id) { if ($(id)) $(id).classList.remove("open"); }
-
   if ($("btnNewPlaylist")) {
     $("btnNewPlaylist").addEventListener("click", () => {
+      createPlaylistSeedSong = null;
       if ($("playlistNameInput")) $("playlistNameInput").value = "";
       if ($("playlistDescInput")) $("playlistDescInput").value = "";
       openModal("createPlaylistModal");
@@ -6487,59 +6971,89 @@ APP_JS = r'''/* ================================================================
       let created = { id: Date.now(), name, description, song_count: 0, songs: [] };
       try {
         const data = await api("/api/playlists", jsonOpts("POST", { name, description }));
-        if (data.playlist) created = { ...data.playlist, songs: [] };
+        if (data && data.playlist) created = { ...data.playlist, songs: [] };
       } catch (err) {}
+
+      if (createPlaylistSeedSong) {
+        created.songs.push({
+          ...createPlaylistSeedSong,
+          id: Date.now() + 1
+        });
+        created.song_count = created.songs.length;
+        try {
+          await api("/api/playlists/" + created.id + "/songs", jsonOpts("POST", createPlaylistSeedSong));
+        } catch (err) {}
+        createPlaylistSeedSong = null;
+      }
+
       const localLists = getLocalPlaylists();
       localLists.unshift(created);
       saveLocalPlaylists(localLists);
       closeModal("createPlaylistModal");
-      toast("Playlist created: " + name);
+      toast("✅ Created playlist: " + name);
       renderLibraryView();
+      window.openPlaylist(created.id);
     });
   }
 
   async function openAddToPlaylist(song) {
-    pendingSong = song;
+    pendingSong = song || window.Player.currentSong();
+    if (!pendingSong) {
+      toast("Play or select a song first");
+      return;
+    }
+    if ($("addSongTargetLabel")) {
+      $("addSongTargetLabel").textContent = "♪ " + pendingSong.title + " — " + pendingSong.artist;
+    }
+    if ($("quickNewPlaylistName")) $("quickNewPlaylistName").value = "";
+
     const lists = getLocalPlaylists();
-    if (!lists.length) { toast("Tap Create (+) in the bottom bar to create a playlist first"); return; }
-    $("playlistSelect").innerHTML = lists.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+    const tapBox = $("quickPlaylistTapList");
+    if (tapBox) {
+      if (!lists.length) {
+        tapBox.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:6px 0;">You have no custom playlists yet. Type a name below to create your first playlist & add this song!</div>';
+      } else {
+        tapBox.innerHTML = lists.map((p) => {
+          const cnt = Array.isArray(p.songs) ? p.songs.length : (p.song_count || 0);
+          return `<button type="button" class="quick-pl-item-btn" data-tap-pid="${p.id}">
+            <span>🎵 ${esc(p.name)}</span>
+            <span style="font-size:12px;color:var(--text-muted);">${cnt} songs • + Add</span>
+          </button>`;
+        }).join("");
+        tapBox.querySelectorAll("[data-tap-pid]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const pid = btn.getAttribute("data-tap-pid");
+            await addSongToPlaylistById(pid, pendingSong);
+            closeModal("addToPlaylistModal");
+          });
+        });
+      }
+    }
     openModal("addToPlaylistModal");
+  }
+
+  if ($("btnQuickCreateAndAdd")) {
+    $("btnQuickCreateAndAdd").addEventListener("click", async () => {
+      const nameInput = $("quickNewPlaylistName");
+      const name = (nameInput && nameInput.value.trim()) || "My Playlist";
+      let created = { id: Date.now(), name, description: "Custom Playlist", song_count: 0, songs: [] };
+      try {
+        const data = await api("/api/playlists", jsonOpts("POST", { name, description: "Custom Playlist" }));
+        if (data && data.playlist) created = { ...data.playlist, songs: [] };
+      } catch (err) {}
+      const localLists = getLocalPlaylists();
+      localLists.unshift(created);
+      saveLocalPlaylists(localLists);
+      if (pendingSong) {
+        await addSongToPlaylistById(created.id, pendingSong);
+      }
+      closeModal("addToPlaylistModal");
+      window.openPlaylist(created.id);
+    });
   }
 
   if ($("btnCloseAddToPlaylist")) $("btnCloseAddToPlaylist").addEventListener("click", () => closeModal("addToPlaylistModal"));
   if ($("btnCancelAddToPlaylist")) $("btnCancelAddToPlaylist").addEventListener("click", () => closeModal("addToPlaylistModal"));
-
-  if ($("formAddToPlaylist")) {
-    $("formAddToPlaylist").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!pendingSong) return;
-      const s = pendingSong;
-      const id = $("playlistSelect").value;
-      let addedEntry = {
-        id: Date.now(),
-        song_id: s.id, title: s.title, artist: s.artist, album: s.album || "",
-        duration: s.duration || 0, image_url: s.image_url || "", media_url: s.media_url,
-        backup_urls: s.backup_urls || []
-      };
-      try {
-        const data = await api("/api/playlists/" + id + "/songs", jsonOpts("POST", {
-          song_id: s.id, title: s.title, artist: s.artist, album: s.album || "",
-          duration: s.duration || 0, image_url: s.image_url || "", media_url: s.media_url
-        }));
-        if (data.song) addedEntry = { ...data.song, backup_urls: s.backup_urls || [] };
-      } catch (err) {}
-      const localLists = getLocalPlaylists();
-      const pl = localLists.find((p) => Number(p.id) === Number(id));
-      if (pl) {
-        if (!Array.isArray(pl.songs)) pl.songs = [];
-        pl.songs.push(addedEntry);
-        pl.song_count = pl.songs.length;
-        saveLocalPlaylists(localLists);
-      }
-      closeModal("addToPlaylistModal");
-      toast("Added to playlist");
-    });
-  }
 
   // ---- Profile Avatar & Onboarding ----
   function showProfile(p) {
@@ -6613,7 +7127,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-spotify-v27";
+SW_JS = r'''const CACHE = "musify-spotify-v28";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
