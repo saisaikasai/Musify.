@@ -1752,7 +1752,7 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    cache_key = f"search_v29::{clean_q.lower()}::p{page}"
+    cache_key = f"search_v31::{clean_q.lower()}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1790,7 +1790,7 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     English (Ed Sheeran, The Weeknd), and Hindi hits in parallel.
     """
     cat = category.lower().strip()
-    cache_key = f"cat_v29::{cat}::p{page}"
+    cache_key = f"cat_v31::{cat}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -2261,7 +2261,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=29">
+  <link rel="stylesheet" href="/static/css/style.css?v=31">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -2820,19 +2820,19 @@ INDEX_HTML = r'''<!DOCTYPE html>
 
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/js/player.js?v=29"></script>
-  <script src="/static/js/app.js?v=29"></script>
+  <script src="/static/js/player.js?v=31"></script>
+  <script src="/static/js/app.js?v=31"></script>
   <script>
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-spotify-v29") caches.delete(k);
+          if (k !== "musify-spotify-v31") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=29").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=31").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -4548,77 +4548,17 @@ html, body {
 '''
 
 PLAYER_JS = r'''/* ==========================================================================
-   Musify Anti-Stall Mobile & Bus Streaming Engine:
-   - Prioritizes _160.mp4 & _96.mp4 full-length AAC for zero-stall bus/mobile play
-   - Mid-Song Freeze Detector & Same-Second Bitrate Downshift (heals stalls in <2.5s)
-   - Next-Song Pre-Bufferer (preloads Song N+1 at 65% progress for 0ms transitions)
-   - Throttled Android MediaSession IPC (prevents audio cutouts after 2-3 songs)
-   - Zero background video bandwidth theft + Screen Wake Lock
-   - Smart Context Radio (/api/similar) + Strict Zero-Repeat History
+   Musify Native Single-Stream Player & Synchronous Autoplay Engine:
+   - Single dedicated <audio id="audio"> element (zero competing audio tags,
+     zero 1-sample WAV loop chopping, zero mid-song src resets when screen is off!)
+   - 100% Synchronous `ended` handler so Song 2+ launches in the same tick
+     both in foreground and when the phone screen is locked/off
+   - Pure-Telugu Queue Lock when playing Telugu songs + Zero-Repeat History
    ========================================================================== */
 (function () {
   const $ = (id) => document.getElementById(id);
   const audio = $("audio");
   const canvasVideo = $("canvasVideo");
-
-  // Hidden preloader element to pre-buffer the next song in the browser HTTP cache
-  const preloadAudio = document.createElement("audio");
-  preloadAudio.preload = "auto";
-  preloadAudio.muted = true;
-  preloadAudio.style.display = "none";
-  document.body.appendChild(preloadAudio);
-
-  // Screen-Off Continuous Keep-Alive Bridge (1-second valid PCM WAV silence loop + Web Audio oscillator)
-  // Holds Android/iOS hardware audio focus continuously across song transitions when the phone screen is OFF!
-  const SILENT_WAV_URI = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-  const keepAliveAudio = document.createElement("audio");
-  keepAliveAudio.src = SILENT_WAV_URI;
-  keepAliveAudio.loop = true;
-  keepAliveAudio.volume = 0.01;
-  keepAliveAudio.setAttribute("playsinline", "");
-  keepAliveAudio.style.display = "none";
-  document.body.appendChild(keepAliveAudio);
-
-  let audioCtx = null;
-  let keepAliveOsc = null;
-  window.screenOffLockEnabled = true;
-
-  function startScreenOffBridge() {
-    if (!window.screenOffLockEnabled) return;
-    try {
-      if (keepAliveAudio.paused) {
-        keepAliveAudio.play().catch(() => {});
-      }
-    } catch (e) {}
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (Ctx) {
-        if (!audioCtx) {
-          audioCtx = new Ctx();
-          const osc = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
-          gain.gain.value = 0.0001;
-          osc.connect(gain);
-          gain.connect(audioCtx.destination);
-          osc.start();
-          keepAliveOsc = osc;
-        }
-        if (audioCtx.state === "suspended") {
-          audioCtx.resume().catch(() => {});
-        }
-      }
-    } catch (e) {}
-  }
-
-  function stopScreenOffBridge() {
-    try { keepAliveAudio.pause(); } catch (e) {}
-    try {
-      if (audioCtx && audioCtx.state === "running") {
-        audioCtx.suspend().catch(() => {});
-      }
-    } catch (e) {}
-  }
-  window.startScreenOffBridge = startScreenOffBridge;
 
   const ICON_PLAY_MINI = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>';
   const ICON_PAUSE_MINI = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
@@ -4633,22 +4573,28 @@ PLAYER_JS = r'''/* =============================================================
     urlTry: 0,
     lyricLines: [],
     playedKeys: new Set(),
-    lastAdvanceTs: 0,
-    trackStartTs: 0,
     wantPlaying: false,
-    lastVisibilityChange: 0,
+    userPaused: false,
+    interruptedByExternal: false,
+    interruptedAt: 0,
+    switchingTrack: false,
     fetchingSimilar: false,
-    lastSimilarSeedKey: "",
-    // Anti-stall & bus network state
-    lastObservedTime: -1,
-    stallTicks: 0,
-    lastHealTs: 0,
     lastMediaPosUpdateTs: 0,
-    preloadedNextUrl: "",
+    lastTrackAdvanceTime: 0,
+    blobCacheOrder: [],
     wakeLockSentinel: null
   };
 
-  // Request Screen Wake Lock while playing so Android does not throttle network after 2-3 songs
+  // Configure navigator.audioSession (when supported on Android/iOS) to respect external audio & auto-resume after calls
+  try {
+    if ("audioSession" in navigator && navigator.audioSession) {
+      navigator.audioSession.type = "playback";
+    }
+  } catch (e) {}
+
+  window.screenOffLockEnabled = true;
+  window.startScreenOffBridge = function () {};
+
   async function acquireWakeLock() {
     if (!("wakeLock" in navigator) || document.hidden) return;
     try {
@@ -4707,7 +4653,6 @@ PLAYER_JS = r'''/* =============================================================
     const k = canonicalSongKey(song);
     if (k) state.playedKeys.add(k);
     if (song.id) state.playedKeys.add("id_" + String(song.id));
-    if (song.media_url) state.playedKeys.add("url_" + String(song.media_url));
   }
 
   function hasSongBeenPlayed(song) {
@@ -4715,11 +4660,9 @@ PLAYER_JS = r'''/* =============================================================
     const k = canonicalSongKey(song);
     if (k && state.playedKeys.has(k)) return true;
     if (song.id && state.playedKeys.has("id_" + String(song.id))) return true;
-    if (song.media_url && state.playedKeys.has("url_" + String(song.media_url))) return true;
     return false;
   }
 
-  // Detects whether a song is Telugu vs English vs Hindi so Telugu playback NEVER mixes other languages
   function detectSongLang(song) {
     if (!song) return "telugu";
     const rawLang = String(song.language || "").toLowerCase().trim();
@@ -4737,13 +4680,11 @@ PLAYER_JS = r'''/* =============================================================
     const seedLang = detectSongLang(seedSong);
     const candLang = detectSongLang(candSong);
     if (seedLang === "telugu") {
-      // When playing a Telugu song, strictly allow ONLY Telugu songs!
       return candLang === "telugu";
     }
     return seedLang === candLang;
   }
 
-  // Orders streams [_160.mp4, _96.mp4, _320.mp4, _48.mp4] so mobile/bus networks never choke on 12MB 320kbps files
   function urlsFor(song) {
     if (!song) return [];
     const raw = [song.media_url].concat(song.backup_urls || []);
@@ -4752,7 +4693,7 @@ PLAYER_JS = r'''/* =============================================================
       let clean = ensureHttps(u);
       if (!clean || clean.includes("soundhelix.com")) return;
       clean = clean.replace("//preview.saavncdn.com", "//aac.saavncdn.com").replace("_96_p.mp4", "_160.mp4");
-      ["_160.mp4", "_96.mp4", "_320.mp4", "_48.mp4"].forEach((br) => {
+      ["_96.mp4", "_160.mp4", "_320.mp4", "_48.mp4"].forEach((br) => {
         ["_320.mp4", "_160.mp4", "_96.mp4", "_48.mp4", "_96_p.mp4"].forEach((orig) => {
           if (clean.includes(orig)) {
             const v = clean.replace(orig, br);
@@ -4785,33 +4726,13 @@ PLAYER_JS = r'''/* =============================================================
     return state.queue[state.index] || null;
   }
 
-  // Preloads the next unplayed song into the browser HTTP cache when the current song reaches 60% progress
-  function preloadNextUpcomingSong() {
-    for (let idx = state.index + 1; idx < state.queue.length; idx++) {
-      const cand = state.queue[idx];
-      if (cand && !hasSongBeenPlayed(cand)) {
-        const nextUrls = urlsFor(cand);
-        if (nextUrls.length && state.preloadedNextUrl !== nextUrls[0]) {
-          state.preloadedNextUrl = nextUrls[0];
-          try {
-            preloadAudio.src = nextUrls[0];
-            preloadAudio.load();
-          } catch (e) {}
-        }
-        return;
-      }
-    }
-  }
-
-  // ---- Smart Context Radio Prefetcher (/api/similar) ----
-  async function prefetchSimilarSongs(seedSong, prioritizeImmediateNext) {
+  // ---- Background Smart Context Radio Prefetcher (/api/similar) ----
+  async function prefetchSimilarSongs(seedSong) {
     if (!seedSong || state.fetchingSimilar) return;
-    const seedKey = canonicalSongKey(seedSong);
     state.fetchingSimilar = true;
-    state.lastSimilarSeedKey = seedKey;
 
     try {
-      const excludeArr = Array.from(state.playedKeys).filter((k) => !k.startsWith("id_") && !k.startsWith("url_")).slice(-40);
+      const excludeArr = Array.from(state.playedKeys).filter((k) => !k.startsWith("id_")).slice(-40);
       const params = new URLSearchParams({
         title: seedSong.title || "",
         artist: seedSong.artist || "",
@@ -4821,79 +4742,34 @@ PLAYER_JS = r'''/* =============================================================
       const res = await fetch("/api/similar?" + params.toString());
       const data = await res.json();
       const simList = (data && Array.isArray(data.songs)) ? data.songs : [];
-      if (!simList.length) {
-        state.fetchingSimilar = false;
-        return;
-      }
+      if (simList.length) {
+        const existingKeys = new Set(state.queue.map((x) => canonicalSongKey(x)));
+        state.playedKeys.forEach((pk) => existingKeys.add(pk));
 
-      const existingKeys = new Set();
-      state.queue.forEach((qItem, idx) => {
-        if (idx <= state.index) {
-          const k = canonicalSongKey(qItem);
-          if (k) existingKeys.add(k);
+        const freshRelated = [];
+        simList.forEach((cand) => {
+          if (!cand || !cand.media_url) return;
+          if (!isLanguageCompatible(seedSong, cand)) return;
+          const ck = canonicalSongKey(cand);
+          if (!ck || existingKeys.has(ck) || hasSongBeenPlayed(cand)) return;
+          existingKeys.add(ck);
+          freshRelated.push(cand);
+        });
+
+        if (freshRelated.length) {
+          // Insert fresh related songs right after the next 1-2 tracks so autoplay flows naturally
+          const insertPos = Math.min(state.queue.length, state.index + 2);
+          const before = state.queue.slice(0, insertPos);
+          const after = state.queue.slice(insertPos);
+          state.queue = before.concat(freshRelated, after);
+          renderQueue();
+          save();
         }
-      });
-      state.playedKeys.forEach((pk) => existingKeys.add(pk));
-
-      const freshRelated = [];
-      simList.forEach((cand) => {
-        if (!cand || !cand.media_url) return;
-        const ck = canonicalSongKey(cand);
-        if (!ck || existingKeys.has(ck) || hasSongBeenPlayed(cand)) return;
-        existingKeys.add(ck);
-        freshRelated.push(cand);
-      });
-
-      if (freshRelated.length) {
-        if (prioritizeImmediateNext) {
-          const keptBeforeAndCurrent = state.queue.slice(0, state.index + 1);
-          const remainingAfter = state.queue.slice(state.index + 1).filter((item) => {
-            const ik = canonicalSongKey(item);
-            return ik && !existingKeys.has(ik) && !hasSongBeenPlayed(item);
-          });
-          state.queue = keptBeforeAndCurrent.concat(freshRelated, remainingAfter);
-        } else {
-          const allCurrentKeys = new Set(state.queue.map((x) => canonicalSongKey(x)));
-          freshRelated.forEach((fr) => {
-            const fk = canonicalSongKey(fr);
-            if (fk && !allCurrentKeys.has(fk)) {
-              state.queue.push(fr);
-              allCurrentKeys.add(fk);
-            }
-          });
-        }
-        renderQueue();
-        save();
       }
     } catch (e) {}
     state.fetchingSimilar = false;
   }
 
-  function pruneUpcomingDuplicates() {
-    if (!state.queue.length || state.index < 0) return;
-    const seenKeys = new Set();
-    for (let i = 0; i <= state.index && i < state.queue.length; i++) {
-      const k = canonicalSongKey(state.queue[i]);
-      if (k) seenKeys.add(k);
-    }
-    state.playedKeys.forEach((pk) => seenKeys.add(pk));
-
-    const curSeed = state.queue[state.index];
-    const head = state.queue.slice(0, state.index + 1);
-    const tail = [];
-    for (let j = state.index + 1; j < state.queue.length; j++) {
-      const item = state.queue[j];
-      const ik = canonicalSongKey(item);
-      if (!ik || seenKeys.has(ik) || hasSongBeenPlayed(item)) continue;
-      if (curSeed && !isLanguageCompatible(curSeed, item)) continue;
-      seenKeys.add(ik);
-      tail.push(item);
-    }
-    state.queue = head.concat(tail);
-  }
-
-  // ---- Poster Backdrop Updater (Zero Video Bandwidth Theft!) ----
-  // Never downloads heavy Mixkit .mp4 videos so 100% of mobile/bus bandwidth & hardware decoder stay on <audio>
   function updateCanvasVideo(song) {
     if (!song) return;
     const img = ensureHttps(song.image_url);
@@ -4949,7 +4825,6 @@ PLAYER_JS = r'''/* =============================================================
       $("npFloatingLyric").textContent = "♪ " + lines[activeIdx].text;
     }
 
-    // Only touch DOM scroll if the full-screen sheet is actually open (avoids background CPU layout thrashing)
     const sheetOpen = $("nowPlayingSheet") && $("nowPlayingSheet").classList.contains("open");
     if (!sheetOpen) return;
 
@@ -5098,8 +4973,10 @@ PLAYER_JS = r'''/* =============================================================
     if ("mediaSession" in navigator && s) {
       try {
         navigator.mediaSession.metadata = new MediaMetadata({
-          title: s.title, artist: s.artist, album: s.album || "",
-          artwork: s.image_url ? [{ src: s.image_url, sizes: "512x512" }] : []
+          title: s.title,
+          artist: s.artist,
+          album: s.album || "Musify",
+          artwork: s.image_url ? [{ src: s.image_url, sizes: "512x512", type: "image/jpeg" }] : []
         });
       } catch (e) {}
     }
@@ -5124,90 +5001,159 @@ PLAYER_JS = r'''/* =============================================================
       </div>`).join("");
   }
 
-  // ---- Atomic Audio Launcher & Mid-Song Same-Second Healer ----
-  function attemptPlayAudio(seekToSec) {
-    if (!state.wantPlaying || !audio.src) return;
-    acquireWakeLock();
-    if (typeof seekToSec === "number" && seekToSec > 1) {
-      const applySeek = () => {
-        try {
-          if (audio.duration && seekToSec < audio.duration - 1) {
-            audio.currentTime = seekToSec;
-          }
-        } catch (e) {}
-        audio.removeEventListener("loadedmetadata", applySeek);
-      };
-      if (audio.readyState >= 1) applySeek();
-      else audio.addEventListener("loadedmetadata", applySeek);
-    }
-    const p = audio.play();
-    if (p && p.catch) {
-      p.catch(() => {
-        setTimeout(() => {
-          if (state.wantPlaying && audio.paused && audio.src) {
-            audio.play().catch(() => {});
-          }
-        }, 200);
-      });
+  // ---- In-Memory RAM Blob Pre-Caching Engine (Eliminates Screen-Off & Lock-Screen Buffering/Cutting!) ----
+  // When a phone screen turns off, Android puts background TCP sockets into Doze mode, throttling HTTP 206 range chunks.
+  // By pre-downloading the full song file (~2.2 MB) into a RAM `blob:` URL while playing, playback reads 100% from RAM
+  // with ZERO network dependency when the screen is off or when unlocking the phone!
+  function registerSongBlobUrl(song, blobUrl) {
+    if (!song || !blobUrl) return;
+    song._blobUrl = blobUrl;
+    state.blobCacheOrder.push(song);
+    while (state.blobCacheOrder.length > 5) {
+      const oldest = state.blobCacheOrder.shift();
+      if (oldest && oldest !== current() && oldest._blobUrl) {
+        try { URL.revokeObjectURL(oldest._blobUrl); } catch (e) {}
+        oldest._blobUrl = null;
+        oldest._blobLoading = false;
+      }
     }
   }
 
-  function startAudio(resumeAtSec) {
+  async function preloadSongToRamBlob(song) {
+    if (!song || song._blobUrl || song._blobLoading) return song ? song._blobUrl : null;
+    const urls = urlsFor(song);
+    if (!urls.length) return null;
+    song._blobLoading = true;
+
+    // 1. Try direct fast CORS fetch of _96.mp4 / _160.mp4 from JioSaavn CDN
+    for (let i = 0; i < Math.min(2, urls.length); i++) {
+      try {
+        const resp = await fetch(urls[i], { mode: "cors", credentials: "omit" });
+        if (resp.ok) {
+          const blob = await resp.blob();
+          if (blob && blob.size > 100000) {
+            const bUrl = URL.createObjectURL(blob);
+            registerSongBlobUrl(song, bUrl);
+            song._blobLoading = false;
+            return bUrl;
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 2. Fallback to same-origin /api/download?inline=1 proxy
+    try {
+      const proxyUrl = "/api/download?inline=1&url=" + encodeURIComponent(urls[0]) +
+        "&id=" + encodeURIComponent(song.id || "") +
+        "&title=" + encodeURIComponent(song.title || "");
+      const resp = await fetch(proxyUrl);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        if (blob && blob.size > 100000) {
+          const bUrl = URL.createObjectURL(blob);
+          registerSongBlobUrl(song, bUrl);
+          song._blobLoading = false;
+          return bUrl;
+        }
+      }
+    } catch (e) {}
+
+    song._blobLoading = false;
+    return null;
+  }
+
+  function preloadUpcomingQueueBlobs() {
+    const cur = current();
+    if (cur) {
+      preloadSongToRamBlob(cur).then((bUrl) => {
+        // If the current song finished downloading into RAM and is currently stalling/buffering on a remote URL,
+        // swap seamlessly to the RAM blob at the exact currentTime!
+        if (bUrl && current() === cur && audio.src && !audio.src.startsWith("blob:")) {
+          if (audio.readyState < 3 || (audio.paused && state.wantPlaying && !state.userPaused && !state.interruptedByExternal)) {
+            swapCurrentStreamToRamBlob();
+          }
+        }
+      });
+    }
+    // Pre-cache the next 2 unplayed language-compatible tracks in the queue so Song 2 & Song 3 play 100% from RAM!
+    let preloadedCount = 0;
+    for (let idx = state.index + 1; idx < state.queue.length && preloadedCount < 2; idx++) {
+      const cand = state.queue[idx];
+      if (cand && !hasSongBeenPlayed(cand) && (!cur || isLanguageCompatible(cur, cand))) {
+        preloadedCount++;
+        preloadSongToRamBlob(cand);
+      }
+    }
+  }
+
+  function swapCurrentStreamToRamBlob() {
+    const s = current();
+    if (!s || !s._blobUrl || !audio.src || audio.src.startsWith("blob:")) return false;
+    const savedTime = audio.currentTime || 0;
+    const dur = audio.duration || 0;
+    if (dur > 15 && (dur - savedTime) <= 1.5) return false;
+    state.switchingTrack = true;
+    audio.src = s._blobUrl;
+    try {
+      audio.currentTime = savedTime;
+    } catch (e) {
+      audio.addEventListener("loadedmetadata", function onMeta() {
+        audio.removeEventListener("loadedmetadata", onMeta);
+        try { audio.currentTime = savedTime; } catch (err) {}
+      });
+    }
+    const p = audio.play();
+    if (p && p.then) {
+      p.then(() => { state.switchingTrack = false; }).catch(() => { state.switchingTrack = false; });
+    } else {
+      state.switchingTrack = false;
+    }
+    return true;
+  }
+
+  // ---- Pure Synchronous Audio Starter (Uses RAM Blob when ready for zero screen-off buffering!) ----
+  function startAudio() {
     const s = current();
     if (!s) return;
     state.wantPlaying = true;
-    state.trackStartTs = Date.now();
-    state.lastObservedTime = resumeAtSec || 0;
-    state.stallTicks = 0;
-
-    // Activate Screen-Off Keep-Alive Bridge BEFORE switching src so Android never drops lock-screen AudioFocus!
-    startScreenOffBridge();
+    state.userPaused = false;
+    state.interruptedByExternal = false;
+    state.switchingTrack = true;
+    acquireWakeLock();
 
     const urls = urlsFor(s);
-    if (!urls.length) {
+    if (!s._blobUrl && !urls.length) {
+      state.switchingTrack = false;
       resolveFreshAndPlay(s);
       return;
     }
-    const chosenUrl = urls[Math.min(state.urlTry, urls.length - 1)];
-    // CRITICAL FOR SCREEN-OFF PLAYBACK: Do NOT call audio.pause() before setting audio.src!
-    // Calling audio.pause() while document.hidden is true revokes Android OS AudioFocus!
+    // Prefer in-memory RAM Blob URL if already pre-cached (0 network calls during lock-screen / screen-off!)
+    const chosenUrl = (s._blobUrl && state.urlTry === 0)
+      ? s._blobUrl
+      : urls[Math.min(state.urlTry, urls.length - 1)];
+
     audio.autoplay = true;
     audio.volume = 1.0;
     audio.src = chosenUrl;
-    attemptPlayAudio(resumeAtSec || 0);
+
+    const p = audio.play();
+    if (p && p.then) {
+      p.then(() => { state.switchingTrack = false; }).catch(() => { state.switchingTrack = false; });
+    } else {
+      state.switchingTrack = false;
+    }
 
     if ("mediaSession" in navigator) {
       try { navigator.mediaSession.playbackState = "playing"; } catch (e) {}
     }
-  }
 
-  // Heals a mid-song network stall (e.g. when travelling on a bus) by stepping to _96.mp4 at the EXACT same second!
-  function healMidSongStall() {
-    const now = Date.now();
-    if (now - state.lastHealTs < 3500) return;
-    state.lastHealTs = now;
-    const s = current();
-    if (!s) return;
-    const savedTime = audio.currentTime || state.lastObservedTime || 0;
-    // If stall happened at the very end of the track, advance to next song instead
-    if (audio.duration > 15 && (audio.duration - savedTime) <= 2.5) {
-      next(true, true);
-      return;
-    }
-    const urls = urlsFor(s);
-    if (state.urlTry + 1 < urls.length) {
-      state.urlTry++;
-      startAudio(savedTime);
-    } else {
-      // Re-open connection at savedTime on primary URL
-      state.urlTry = 0;
-      startAudio(savedTime);
-    }
+    // Kick off RAM Blob pre-caching for current + next 2 songs
+    preloadUpcomingQueueBlobs();
   }
 
   async function resolveFreshAndPlay(s) {
     if (!s || s._resolvedFresh) {
-      if (state.queue.length > 1) next(true, true);
+      if (state.queue.length > 1) next();
       return;
     }
     s._resolvedFresh = true;
@@ -5219,89 +5165,79 @@ PLAYER_JS = r'''/* =============================================================
         s.media_url = j.songs[0].media_url;
         s.backup_urls = j.songs[0].backup_urls || [j.songs[0].media_url];
         state.urlTry = 0;
-        startAudio(0);
+        startAudio();
         return;
       }
     } catch (e) {}
-    if (state.queue.length > 1) next(true, true);
+    if (state.queue.length > 1) next();
   }
 
-  function playAt(i, prioritizeRadio) {
+  function playAt(i, triggerSimilarPrefetch) {
     if (i < 0 || i >= state.queue.length) return;
     state.index = i;
     state.urlTry = 0;
     const s = state.queue[i];
     markSongPlayed(s);
-    pruneUpcomingDuplicates();
-    startAudio(0);
+    startAudio();
     updateInfo();
     renderQueue();
     save();
 
+    // Fetch more related songs in background if needed
     const remainingUnplayed = state.queue.slice(state.index + 1).filter((x) => !hasSongBeenPlayed(x));
-    if (prioritizeRadio || remainingUnplayed.length < 8) {
-      prefetchSimilarSongs(s, Boolean(prioritizeRadio));
+    if (triggerSimilarPrefetch || remainingUnplayed.length < 10) {
+      prefetchSimilarSongs(s).then(() => {
+        preloadUpcomingQueueBlobs();
+      }).catch(() => {});
     }
   }
 
-  // ---- Smart Non-Repeating Next Track Selector ----
-  async function next(auto, bypassLock) {
-    const now = Date.now();
-    if (auto && !bypassLock && (now - state.lastAdvanceTs < 2400)) {
-      return;
-    }
-    state.lastAdvanceTs = now;
-
+  // ---- 100% SYNCHRONOUS Next Track Selector (Critical for Screen-Off & Foreground Autoplay!) ----
+  // Must NOT be async before playAt() so `ended` event calls `audio.src = ...; audio.play();` in the exact same call stack tick!
+  function next() {
     if (!state.queue.length) return;
 
-    if (auto && state.repeat === 2) {
+    // Repeat ONE mode only when explicitly toggled to repeat === 2
+    if (state.repeat === 2) {
       audio.currentTime = 0;
-      attemptPlayAudio(0);
+      audio.play().catch(() => {});
       return;
-    }
-
-    pruneUpcomingDuplicates();
-
-    for (let idx = state.index + 1; idx < state.queue.length; idx++) {
-      const cand = state.queue[idx];
-      if (cand && !hasSongBeenPlayed(cand)) {
-        return playAt(idx, false);
-      }
-    }
-
-    for (let idx = 0; idx < state.index; idx++) {
-      const cand = state.queue[idx];
-      if (cand && !hasSongBeenPlayed(cand)) {
-        return playAt(idx, false);
-      }
-    }
-
-    const screenCatalog = window.allLoadedSongs || [];
-    for (let k = 0; k < screenCatalog.length; k++) {
-      const sc = screenCatalog[k];
-      if (sc && !hasSongBeenPlayed(sc)) {
-        state.queue.push(sc);
-        return playAt(state.queue.length - 1, false);
-      }
     }
 
     const seed = current();
-    if (seed) {
-      await prefetchSimilarSongs(seed, false);
-      for (let idx = state.index + 1; idx < state.queue.length; idx++) {
-        const cand = state.queue[idx];
-        if (cand && !hasSongBeenPlayed(cand)) {
-          return playAt(idx, false);
-        }
+
+    // 1. Find the next UNPLAYED song in state.queue after state.index matching the language
+    for (let idx = state.index + 1; idx < state.queue.length; idx++) {
+      const cand = state.queue[idx];
+      if (cand && !hasSongBeenPlayed(cand) && (!seed || isLanguageCompatible(seed, cand))) {
+        return playAt(idx, false);
       }
     }
 
-    const curSong = current();
+    // 2. Check earlier indexes in state.queue in case user started mid-list
+    for (let idx = 0; idx < state.index; idx++) {
+      const cand = state.queue[idx];
+      if (cand && !hasSongBeenPlayed(cand) && (!seed || isLanguageCompatible(seed, cand))) {
+        return playAt(idx, false);
+      }
+    }
+
+    // 3. Synchronously pull any unplayed song from window.allLoadedSongs
+    const screenCatalog = window.allLoadedSongs || [];
+    for (let k = 0; k < screenCatalog.length; k++) {
+      const sc = screenCatalog[k];
+      if (sc && !hasSongBeenPlayed(sc) && (!seed || isLanguageCompatible(seed, sc))) {
+        state.queue.push(sc);
+        return playAt(state.queue.length - 1, true);
+      }
+    }
+
+    // 4. If all loaded songs were played, clear played history (except current song) and advance immediately
     state.playedKeys.clear();
-    if (curSong) markSongPlayed(curSong);
+    if (seed) markSongPlayed(seed);
     if (state.queue.length > 1) {
       const nextIdx = (state.index + 1) % state.queue.length;
-      return playAt(nextIdx, false);
+      return playAt(nextIdx, true);
     }
   }
 
@@ -5311,7 +5247,7 @@ PLAYER_JS = r'''/* =============================================================
     const targetIdx = state.index > 0 ? state.index - 1 : 0;
     state.index = targetIdx;
     state.urlTry = 0;
-    startAudio(0);
+    startAudio();
     updateInfo();
     renderQueue();
     save();
@@ -5322,14 +5258,17 @@ PLAYER_JS = r'''/* =============================================================
       if (state.queue.length) playAt(0, false);
       return;
     }
-    if (!audio.src) { startAudio(0); return; }
+    if (!audio.src) { startAudio(); return; }
     if (audio.paused) {
+      state.userPaused = false;
+      state.interruptedByExternal = false;
       state.wantPlaying = true;
-      startScreenOffBridge();
-      attemptPlayAudio();
+      audio.play().catch(() => {});
     } else {
+      // Explicit user pause: mark userPaused = true so it does NOT auto-resume until user taps Play
+      state.userPaused = true;
+      state.interruptedByExternal = false;
       state.wantPlaying = false;
-      stopScreenOffBridge();
       audio.pause();
     }
   }
@@ -5360,7 +5299,7 @@ PLAYER_JS = r'''/* =============================================================
       if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.3) {
         if (dx < 0) {
           toast("⏭ Next Song");
-          next(false, true);
+          next();
         } else {
           toast("⏮ Previous Song");
           prev();
@@ -5505,7 +5444,6 @@ PLAYER_JS = r'''/* =============================================================
       if (!chosen) return;
 
       if (isUserPlaylist) {
-        // User's own custom playlist or Liked Songs: keep all tracks in exact playlist order!
         state.playedKeys.clear();
         state.queue = rawList;
         playAt(startIndex || 0, false);
@@ -5513,28 +5451,30 @@ PLAYER_JS = r'''/* =============================================================
         return;
       }
 
+      // Build a full, immediate queue in memory (15+ songs ready at t=0ms) so `ended` never runs out of songs!
       const chosenKey = canonicalSongKey(chosen);
-      const chosenMainArtist = String(chosen.artist || "").split(",")[0].trim().toLowerCase();
       const seen = new Set([chosenKey]);
       const cleanQueue = [chosen];
-      let sameArtistCount = 1;
 
-      const addCandidate = (item) => {
-        if (!item) return;
-        if (!isLanguageCompatible(chosen, item)) return;
-        const ik = canonicalSongKey(item);
-        if (!ik || seen.has(ik) || hasSongBeenPlayed(item)) return;
-        const itemArtist = String(item.artist || "").split(",")[0].trim().toLowerCase();
-        if (chosenMainArtist && itemArtist === chosenMainArtist) {
-          if (sameArtistCount >= 2) return;
-          sameArtistCount += 1;
-        }
-        seen.add(ik);
-        cleanQueue.push(item);
+      const appendUnique = (list) => {
+        (list || []).forEach((item) => {
+          if (!item || !item.media_url) return;
+          if (!isLanguageCompatible(chosen, item)) return;
+          const ik = canonicalSongKey(item);
+          if (!ik || seen.has(ik) || hasSongBeenPlayed(item)) return;
+          seen.add(ik);
+          cleanQueue.push(item);
+        });
       };
 
-      for (let i = (startIndex || 0) + 1; i < rawList.length; i++) addCandidate(rawList[i]);
-      for (let i = 0; i < (startIndex || 0); i++) addCandidate(rawList[i]);
+      // 1. Add remaining songs from the tapped list
+      appendUnique(rawList.slice((startIndex || 0) + 1));
+      appendUnique(rawList.slice(0, startIndex || 0));
+
+      // 2. Also top up with window.allLoadedSongs so queue has plenty of tracks immediately
+      if (cleanQueue.length < 15 && Array.isArray(window.allLoadedSongs)) {
+        appendUnique(window.allLoadedSongs);
+      }
 
       state.queue = cleanQueue;
       playAt(0, true);
@@ -5548,6 +5488,10 @@ PLAYER_JS = r'''/* =============================================================
         updateInfo();
         renderQueue();
         save();
+        setTimeout(() => {
+          if (state.queue[0]) preloadSongToRamBlob(state.queue[0]);
+          if (state.queue[1]) preloadSongToRamBlob(state.queue[1]);
+        }, 1200);
       }
     },
     currentSong: current,
@@ -5566,7 +5510,7 @@ PLAYER_JS = r'''/* =============================================================
       state.queue.splice(i, 1);
       if (i < state.index) state.index--;
       if (wasCurrent) {
-        if (state.queue.length) { state.index = Math.min(i, state.queue.length) - 1; next(false, true); }
+        if (state.queue.length) { state.index = Math.min(i, state.queue.length) - 1; next(); }
         else { audio.pause(); audio.removeAttribute("src"); state.index = -1; updateInfo(); }
       }
       renderQueue(); save();
@@ -5577,123 +5521,146 @@ PLAYER_JS = r'''/* =============================================================
       state.queue = []; state.index = -1;
       updateInfo(); renderQueue(); save(); setPlayIcon(false);
     },
-    next: () => next(false, true),
+    next: () => next(),
     prev,
     toggle
   };
 
-  // ---- Audio Events, CanPlay Auto-Starter & 1-Second Anti-Stall Watchdog ----
+  // ---- Smart Audio Focus: Stops for Instagram/YouTube/Phone Calls & Auto-Resumes When Done ----
+  function tryResumeAfterExternalInterruption() {
+    if (!state.interruptedByExternal || state.userPaused || !state.wantPlaying) return;
+    if (!audio.paused || audio.ended) return;
+    const p = audio.play();
+    if (p && p.then) {
+      p.then(() => {
+        state.interruptedByExternal = false;
+        setPlayIcon(true);
+      }).catch(() => {
+        // Still in phone call or external audio still holds exclusive focus; will retry on next signal
+      });
+    }
+  }
+
   audio.addEventListener("play", () => {
-    state.stallTicks = 0;
+    state.switchingTrack = false;
+    state.interruptedByExternal = false;
     setPlayIcon(true);
     acquireWakeLock();
   });
 
   audio.addEventListener("playing", () => {
-    state.stallTicks = 0;
+    state.switchingTrack = false;
+    state.interruptedByExternal = false;
     setPlayIcon(true);
   });
 
   audio.addEventListener("canplay", () => {
-    if (state.wantPlaying && audio.paused) {
-      attemptPlayAudio();
+    // Only auto-start on canplay when switching tracks (never fight an active external interruption!)
+    if (state.wantPlaying && !state.userPaused && !state.interruptedByExternal && audio.paused && !audio.ended) {
+      audio.play().catch(() => {});
     }
   });
 
   audio.addEventListener("loadeddata", () => {
-    if (state.wantPlaying && audio.paused) {
-      attemptPlayAudio();
+    if (state.wantPlaying && !state.userPaused && !state.interruptedByExternal && audio.paused && !audio.ended) {
+      audio.play().catch(() => {});
     }
   });
 
-  audio.addEventListener("pause", () => {
-    // 1. If stream reached the end of the track, advance immediately
-    if (audio.duration > 15 && (audio.duration - audio.currentTime) <= 1.2) {
-      next(true, false);
+  // ---- Unified Debounced Auto-Next Trigger (Handles native `ended` + .mp4 container EOF mismatch!) ----
+  function triggerAutoNext() {
+    const now = Date.now();
+    if (now - state.lastTrackAdvanceTime < 2500) return;
+    state.lastTrackAdvanceTime = now;
+    state.interruptedByExternal = false;
+    next();
+  }
+
+  // If network stream ever buffers/stalls (especially when screen is turned off or locked),
+  // immediately switch the active song to its preloaded in-memory RAM Blob at the exact same timestamp!
+  function handleMidSongBufferStall() {
+    if (!state.wantPlaying || state.userPaused || state.interruptedByExternal || state.switchingTrack) return;
+    const dur = audio.duration || 0;
+    const curT = audio.currentTime || 0;
+    if (dur > 15 && (dur - curT) <= 1.5) {
+      triggerAutoNext();
       return;
     }
-    // 2. If Android OS or Bluetooth/speaker volume ducking briefly paused <audio> while wantPlaying is true, auto-resume!
-    if (state.wantPlaying) {
-      setTimeout(() => {
-        if (state.wantPlaying && audio.paused && !audio.ended) {
-          audio.play().catch(() => {});
-        }
-      }, 90);
+    swapCurrentStreamToRamBlob();
+  }
+
+  audio.addEventListener("waiting", handleMidSongBufferStall);
+  audio.addEventListener("stalled", handleMidSongBufferStall);
+
+  audio.addEventListener("pause", () => {
+    if (state.switchingTrack) return;
+    const dur = audio.duration || 0;
+    const curT = audio.currentTime || 0;
+    // Catch JioSaavn .mp4 containers that stop 0.2s-1.8s before nominal duration without emitting `ended`
+    if (audio.ended || (dur > 15 && (dur - curT) <= 1.8)) {
+      triggerAutoNext();
       return;
     }
     setPlayIcon(false);
+    // If wantPlaying is still true and user did NOT tap pause, then Instagram, YouTube, or a Phone Call
+    // just requested OS AudioFocus! Yield immediately (do NOT fight it) and arm auto-resume for when it finishes!
+    if (state.wantPlaying && !state.userPaused) {
+      state.interruptedByExternal = true;
+      state.interruptedAt = Date.now();
+    }
   });
 
-  // 1-Second Anti-Stall & Continuous Playback Watchdog (Handles Bus Signal Drops & Speaker Cutouts)
-  setInterval(() => {
-    if (!state.wantPlaying || !current()) return;
-
-    // A. If track reached the end, advance to the next unplayed song
-    if (audio.ended || (audio.duration > 15 && audio.currentTime >= audio.duration - 0.6 && audio.paused)) {
-      state.stallTicks = 0;
-      next(true, false);
-      return;
-    }
-
-    // B. If wantPlaying is true and readyState >= 2 but browser/OS paused the element, resume immediately
-    if (audio.paused && audio.readyState >= 2 && !audio.ended) {
-      audio.play().catch(() => {});
-      return;
-    }
-
-    // C. Detect mid-song freeze/stall (e.g. moving bus cell tower handoff where currentTime stops advancing)
-    const curT = audio.currentTime || 0;
-    if (Math.abs(curT - state.lastObservedTime) < 0.04) {
-      state.stallTicks += 1;
-      // If frozen for 3 consecutive seconds, downshift bitrate (_160 -> _96) and resume at exact second!
-      if (state.stallTicks >= 3) {
-        state.stallTicks = 0;
-        healMidSongStall();
-      }
-    } else {
-      state.lastObservedTime = curT;
-      state.stallTicks = 0;
-    }
-  }, 1000);
-
-  // ---- Screen-Off & Background Play vs. Recent Apps Close Handler ----
+  // 1. Resume immediately when returning to Musify from Instagram, YouTube, or Phone Call screen
   document.addEventListener("visibilitychange", () => {
-    state.lastVisibilityChange = Date.now();
-    if (document.hidden) {
-      // Screen turned OFF or user pressed Home button: keep Screen-Off Bridge & audio playing!
-      if (state.wantPlaying) {
-        startScreenOffBridge();
-        if (audio.paused && !audio.ended) {
-          audio.play().catch(() => {});
-        }
+    if (!document.hidden) {
+      acquireWakeLock();
+      if (state.interruptedByExternal && state.wantPlaying && !state.userPaused) {
+        tryResumeAfterExternalInterruption();
       }
     } else {
-      acquireWakeLock();
-      if (state.wantPlaying && audio.paused && !audio.ended) {
-        audio.play().catch(() => {});
-      }
+      // Screen just turned off or switched to background: ensure upcoming songs are in RAM Blob cache
+      preloadUpcomingQueueBlobs();
     }
   });
 
-  function stopAudioOnAppTermination() {
-    state.wantPlaying = false;
-    stopScreenOffBridge();
+  window.addEventListener("focus", () => {
+    if (state.interruptedByExternal && state.wantPlaying && !state.userPaused) {
+      tryResumeAfterExternalInterruption();
+    }
+  });
+
+  window.addEventListener("pageshow", () => {
+    if (state.interruptedByExternal && state.wantPlaying && !state.userPaused) {
+      tryResumeAfterExternalInterruption();
+    }
+  });
+
+  // 2. Resume immediately when a Phone Call ends (hardware audio route switches back from voice call to media)
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
     try {
-      audio.pause();
-      audio.removeAttribute("src");
-      if ("mediaSession" in navigator) {
-        navigator.mediaSession.playbackState = "none";
-        navigator.mediaSession.metadata = null;
-      }
+      navigator.mediaDevices.addEventListener("devicechange", () => {
+        if (state.interruptedByExternal && state.wantPlaying && !state.userPaused) {
+          setTimeout(tryResumeAfterExternalInterruption, 350);
+          setTimeout(tryResumeAfterExternalInterruption, 1200);
+        }
+      });
     } catch (e) {}
   }
 
-  // Note: Do NOT attach to `pagehide` because locking the phone screen fires `pagehide` on mobile browsers!
-  // Only `unload` fires when the tab/app is actually swiped away from Recent Apps.
-  window.addEventListener("unload", stopAudioOnAppTermination);
+  // 3. Foreground Call-End Watcher: if a phone call interrupted Musify while Musify stayed visible on screen
+  //    (or once external audio releases focus while Musify is visible), probe gently every 2.5s ONLY when !document.hidden
+  //    so we NEVER steal audio from Instagram/YouTube while you are inside Instagram/YouTube!
+  setInterval(() => {
+    if (!document.hidden && state.interruptedByExternal && state.wantPlaying && !state.userPaused && audio.paused) {
+      if (Date.now() - state.interruptedAt >= 2200) {
+        tryResumeAfterExternalInterruption();
+      }
+    }
+  }, 2500);
 
+  // PRIMARY AUTOPLAY TRIGGER 1: Native `ended` listener
   audio.addEventListener("ended", () => {
-    next(true, false);
+    triggerAutoNext();
   });
 
   audio.addEventListener("loadedmetadata", () => {
@@ -5711,21 +5678,15 @@ PLAYER_JS = r'''/* =============================================================
 
       syncLyricsToTime(curT);
 
-      // Pre-buffer the next song once current song passes 55% so song transition is 0ms on a bus or with screen off!
-      if (pct >= 55) {
-        preloadNextUpcomingSong();
-      }
-
-      // CRITICAL FOR SCREEN-OFF PLAYBACK: When the screen is OFF (document.hidden), transition 0.85s BEFORE `ended`
-      // while the hardware audio decoder is still actively running so Android OS never suspends between tracks!
-      if (document.hidden && dur > 15 && (dur - curT) <= 0.85) {
-        next(true, false);
+      // PRIMARY AUTOPLAY TRIGGER 2: Advance seamlessly 0.55s before track end while hardware AudioFocus is 100% active!
+      if (dur > 15 && (dur - curT) <= 0.55 && !state.switchingTrack && state.wantPlaying && !state.userPaused) {
+        triggerAutoNext();
         return;
       }
 
-      // Throttle Android MediaSession position IPC to once every 5000ms (fixes audio cutting out after 2-3 songs!)
+      // Update lockscreen MediaSession position only once every 5s when screen is visible
       const now = Date.now();
-      if (now - state.lastMediaPosUpdateTs >= 5000 && "mediaSession" in navigator && navigator.mediaSession.setPositionState) {
+      if (!document.hidden && (now - state.lastMediaPosUpdateTs >= 5000) && "mediaSession" in navigator && navigator.mediaSession.setPositionState) {
         state.lastMediaPosUpdateTs = now;
         try {
           navigator.mediaSession.setPositionState({
@@ -5738,21 +5699,26 @@ PLAYER_JS = r'''/* =============================================================
     }
   });
 
-  audio.addEventListener("error", async () => {
+  audio.addEventListener("error", () => {
     const s = current();
     if (!s) return;
-    const savedTime = audio.currentTime || state.lastObservedTime || 0;
+    // If a blob URL ever errored, clear it and try the CDN URLs
+    if (s._blobUrl && audio.src && audio.src.startsWith("blob:")) {
+      s._blobUrl = null;
+      startAudio();
+      return;
+    }
     const urls = urlsFor(s);
     if (state.urlTry + 1 < urls.length) {
       state.urlTry++;
-      startAudio(savedTime);
+      startAudio();
       return;
     }
     resolveFreshAndPlay(s);
   });
 
   if ($("btnPlay")) $("btnPlay").addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
-  if ($("btnNext")) $("btnNext").addEventListener("click", () => next(false, true));
+  if ($("btnNext")) $("btnNext").addEventListener("click", () => next());
   if ($("btnPrev")) $("btnPrev").addEventListener("click", prev);
   if ($("btnShuffle")) {
     $("btnShuffle").classList.remove("active");
@@ -5792,24 +5758,31 @@ PLAYER_JS = r'''/* =============================================================
     if (tag === "input" || tag === "textarea" || tag === "select") return;
     const k = e.key.toLowerCase();
     if (e.code === "Space") { e.preventDefault(); toggle(); }
-    else if (k === "n" || e.key === "ArrowRight") next(false, true);
+    else if (k === "n" || e.key === "ArrowRight") next();
     else if (k === "p" || e.key === "ArrowLeft") prev();
   });
 
   if ("mediaSession" in navigator) {
     try {
       navigator.mediaSession.setActionHandler("play", () => {
+        state.userPaused = false;
+        state.interruptedByExternal = false;
         state.wantPlaying = true;
-        attemptPlayAudio();
+        audio.play().catch(() => {});
       });
       navigator.mediaSession.setActionHandler("pause", () => {
-        state.wantPlaying = false;
+        // Note: On some Android builds, OS transient audio focus loss also invokes mediaSession pause;
+        // if document.hidden is true, allow auto-resume when user returns to app!
+        if (!document.hidden) {
+          state.userPaused = true;
+          state.wantPlaying = false;
+        } else {
+          state.interruptedByExternal = true;
+          state.interruptedAt = Date.now();
+        }
         audio.pause();
       });
-      navigator.mediaSession.setActionHandler("stop", () => {
-        stopAudioOnAppTermination();
-      });
-      navigator.mediaSession.setActionHandler("nexttrack", () => next(false, true));
+      navigator.mediaSession.setActionHandler("nexttrack", () => next());
       navigator.mediaSession.setActionHandler("previoustrack", prev);
     } catch (e) {}
   }
@@ -7180,7 +7153,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-spotify-v29";
+SW_JS = r'''const CACHE = "musify-spotify-v31";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
@@ -7617,13 +7590,15 @@ def api_save_profile():
 @app.route("/api/download", methods=["GET"])
 def api_download_song():
     """
-    Streams/downloads a full-length song from JioSaavn CDN with Content-Disposition: attachment
-    so mobile browsers save it directly to the phone's Downloads folder with its clean title.
+    Streams/downloads a full-length song from JioSaavn CDN.
+    Supports both file attachment download and fast inline RAM Blob pre-caching (?inline=1)
+    so lock-screen / screen-off playback runs 100% from phone RAM with zero network stalls.
     """
     media_url = request.args.get("url", "").strip()
     song_id = request.args.get("id", "").strip()
     title = request.args.get("title", "Musify_Song").strip()
     artist = request.args.get("artist", "").strip()
+    is_inline = request.args.get("inline", "").strip() == "1"
 
     if not media_url and song_id:
         song_obj = get_song(song_id, lyrics=False)
@@ -7635,10 +7610,24 @@ def api_download_song():
     if not media_url:
         return _err("Valid song stream URL or ID is required for download", 400)
 
-    # Ensure we use full-length aac.saavncdn.com URLs
-    candidates = _build_full_aac_urls(media_url, is_320=True)
+    # Ensure we use full-length aac.saavncdn.com URLs; for inline RAM preloading prefer _96.mp4 / _160.mp4 for 1s fetch
+    base_candidates = _build_full_aac_urls(media_url, is_320=True)
+    if is_inline:
+        fast_cands = []
+        for u in base_candidates:
+            for br in ("_96.mp4", "_160.mp4", "_320.mp4"):
+                for orig in ("_320.mp4", "_160.mp4", "_96.mp4", "_48.mp4"):
+                    if orig in u:
+                        v = u.replace(orig, br)
+                        if v not in fast_cands:
+                            fast_cands.append(v)
+        candidates = fast_cands or base_candidates
+    else:
+        candidates = base_candidates
+
     clean_name = re.sub(r'[\\/*?:"<>|]+', "", f"{title} - {artist}" if artist else title).strip() or "Musify_Song"
     filename = f"{clean_name}.m4a"
+    disposition = f'inline; filename="{filename}"' if is_inline else f'attachment; filename="{filename}"'
 
     for cand_url in candidates:
         try:
@@ -7646,9 +7635,10 @@ def api_download_song():
             if upstream.status_code == 200:
                 content_type = upstream.headers.get("Content-Type", "audio/mp4")
                 headers = {
-                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Content-Disposition": disposition,
                     "Content-Type": content_type,
-                    "Cache-Control": "no-cache"
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "public, max-age=86400" if is_inline else "no-cache"
                 }
                 if upstream.headers.get("Content-Length"):
                     headers["Content-Length"] = upstream.headers["Content-Length"]
