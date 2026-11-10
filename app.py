@@ -357,45 +357,80 @@ SAAVN_MIRRORS = [
 ITUNES_API = "https://itunes.apple.com/search"
 
 GUARANTEED_STREAMS = [
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3"
+    "/api/stream?q=Fear+Song+Devara+Telugu",
+    "/api/stream?q=Dorikithe+Chastavu+Raktacharitra",
+    "/api/stream?q=Hungry+Cheetah+OG+Telugu",
+    "/api/stream?q=Kissik+Pushpa+2+Telugu",
+    "/api/stream?q=Kurchi+Madathapetti+Guntur+Kaaram",
+    "/api/stream?q=Samayama+Hi+Nanna+Telugu"
 ]
 
 FALLBACK_CATALOG = [
     {
-        "id": "telugu_01",
-        "title": "Samajavaragamana",
-        "artist": "Sid Sriram, Thaman S",
-        "album": "Ala Vaikunthapurramuloo",
-        "duration": 214,
+        "id": "devara_fear_telugu",
+        "title": "Fear Song (From 'Devara Part 1') [Telugu]",
+        "artist": "Anirudh Ravichander",
+        "album": "Devara Part 1 (Telugu)",
+        "duration": 196,
         "language": "telugu",
-        "image_url": "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&auto=format&fit=crop&q=80",
+        "image_url": "https://c.saavncdn.com/368/Fear-Song-From-Devara-Part-1-Telugu-Telugu-2024-20240519131003-500x500.jpg",
         "media_url": GUARANTEED_STREAMS[0],
-        "backup_urls": [GUARANTEED_STREAMS[0], GUARANTEED_STREAMS[1]]
+        "backup_urls": [GUARANTEED_STREAMS[0]]
     },
     {
-        "id": "hindi_01",
-        "title": "Kesariya",
-        "artist": "Arijit Singh, Pritam",
-        "album": "Brahmastra",
-        "duration": 268,
-        "language": "hindi",
-        "image_url": "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=500&auto=format&fit=crop&q=80",
+        "id": "raktacharitra_dorikithe",
+        "title": "Dorikithe Chastavu",
+        "artist": "Ravindra Upadhyay, Vishvesh Parmar",
+        "album": "Raktacharitra (Telugu)",
+        "duration": 212,
+        "language": "telugu",
+        "image_url": "https://c.saavncdn.com/208/Raktacharitra-Telugu-2010-20190220140106-500x500.jpg",
         "media_url": GUARANTEED_STREAMS[1],
-        "backup_urls": [GUARANTEED_STREAMS[1], GUARANTEED_STREAMS[2]]
+        "backup_urls": [GUARANTEED_STREAMS[1]]
     },
     {
-        "id": "english_01",
-        "title": "Blinding Lights",
-        "artist": "The Weeknd",
-        "album": "After Hours",
-        "duration": 200,
-        "language": "english",
-        "image_url": "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=500&auto=format&fit=crop&q=80",
+        "id": "og_hungry_cheetah",
+        "title": "Hungry Cheetah (From 'They Call Him OG')",
+        "artist": "Thaman S",
+        "album": "They Call Him OG",
+        "duration": 119,
+        "language": "telugu",
+        "image_url": "https://c.saavncdn.com/989/Hungry-Cheetah-From-They-Call-Him-OG-Telugu-2023-20230903132606-500x500.jpg",
         "media_url": GUARANTEED_STREAMS[2],
-        "backup_urls": [GUARANTEED_STREAMS[2], GUARANTEED_STREAMS[3]]
+        "backup_urls": [GUARANTEED_STREAMS[2]]
+    },
+    {
+        "id": "pushpa2_kissik",
+        "title": "Kissik (From 'Pushpa 2 The Rule') [Telugu]",
+        "artist": "Sublahshini, Devi Sri Prasad",
+        "album": "Pushpa 2 The Rule (Telugu)",
+        "duration": 248,
+        "language": "telugu",
+        "image_url": "https://c.saavncdn.com/587/Kissik-From-Pushpa-2-The-Rule-Telugu-Telugu-2024-20241124192109-500x500.jpg",
+        "media_url": GUARANTEED_STREAMS[3],
+        "backup_urls": [GUARANTEED_STREAMS[3]]
+    },
+    {
+        "id": "guntur_kurchi",
+        "title": "Kurchi Madathapetti",
+        "artist": "Sahithi Chaganti, Sri Krishna, Thaman S",
+        "album": "Guntur Kaaram",
+        "duration": 216,
+        "language": "telugu",
+        "image_url": "https://c.saavncdn.com/000/Guntur-Kaaram-Telugu-2023-20240126145901-500x500.jpg",
+        "media_url": GUARANTEED_STREAMS[4],
+        "backup_urls": [GUARANTEED_STREAMS[4]]
+    },
+    {
+        "id": "hinanna_samayama",
+        "title": "Samayama (From 'Hi Nanna')",
+        "artist": "Anurag Kulkarni, Sithara Krishnakumar, Hesham Abdul Wahab",
+        "album": "Hi Nanna",
+        "duration": 203,
+        "language": "telugu",
+        "image_url": "https://c.saavncdn.com/307/Samayama-From-Hi-Nanna-Telugu-2023-20230918164922-500x500.jpg",
+        "media_url": GUARANTEED_STREAMS[5],
+        "backup_urls": [GUARANTEED_STREAMS[5]]
     }
 ]
 
@@ -2261,7 +2296,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=31">
+  <link rel="stylesheet" href="/static/css/style.css?v=33">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -2820,13 +2855,13 @@ INDEX_HTML = r'''<!DOCTYPE html>
 
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/js/player.js?v=31"></script>
-  <script src="/static/js/app.js?v=31"></script>
+  <script src="/static/js/player.js?v=33"></script>
+  <script src="/static/js/app.js?v=33"></script>
   <script>
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-spotify-v31") caches.delete(k);
+          if (k !== "musify-spotify-v33") caches.delete(k);
         });
       }).catch(() => {});
     }
@@ -4548,12 +4583,13 @@ html, body {
 '''
 
 PLAYER_JS = r'''/* ==========================================================================
-   Musify Native Single-Stream Player & Synchronous Autoplay Engine:
-   - Single dedicated <audio id="audio"> element (zero competing audio tags,
-     zero 1-sample WAV loop chopping, zero mid-song src resets when screen is off!)
-   - 100% Synchronous `ended` handler so Song 2+ launches in the same tick
-     both in foreground and when the phone screen is locked/off
-   - Pure-Telugu Queue Lock when playing Telugu songs + Zero-Repeat History
+   Musify v33 Ultra-Reliable Continuous Player Engine:
+   - Fixes Song 3+ getting stuck after 2 songs by:
+     1) Never setting `interruptedByExternal = true` on track-load pauses (`currentTime < 2.0s` or within `4.5s` of `startAudio()`) or network buffer pauses (`readyState < 3`)
+     2) Appending `/api/similar` radio songs to the END of the queue instead of splicing into Song 3 (`index + 2`)
+     3) Multi-stage Startup & Stall Recovery Watchdog (`+700ms`, `+1800ms`, `+4200ms`) that auto-retries `audio.play()`, steps through fallback bitrates (`_160.mp4` -> `_96.mp4` -> `_320.mp4` -> `/api/stream`), and skips dead tracks automatically
+     4) Pure-Telugu Queue Lock when playing Telugu songs + Zero-Repeat History
+     5) Smart Audio Focus for Instagram, YouTube & Phone Calls (mid-song external interruptions only)
    ========================================================================== */
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -4578,14 +4614,20 @@ PLAYER_JS = r'''/* =============================================================
     interruptedByExternal: false,
     interruptedAt: 0,
     switchingTrack: false,
+    trackLoadStartTs: 0,
+    lastWaitingTs: 0,
+    lastProgressTime: 0,
+    lastProgressTs: 0,
     fetchingSimilar: false,
     lastMediaPosUpdateTs: 0,
     lastTrackAdvanceTime: 0,
-    blobCacheOrder: [],
+    startupTimer1: null,
+    startupTimer2: null,
+    startupWatchdogTimer: null,
+    switchingGuardTimer: null,
     wakeLockSentinel: null
   };
 
-  // Configure navigator.audioSession (when supported on Android/iOS) to respect external audio & auto-resume after calls
   try {
     if ("audioSession" in navigator && navigator.audioSession) {
       navigator.audioSession.type = "playback";
@@ -4690,10 +4732,16 @@ PLAYER_JS = r'''/* =============================================================
     const raw = [song.media_url].concat(song.backup_urls || []);
     const expanded = [];
     raw.forEach((u) => {
-      let clean = ensureHttps(u);
-      if (!clean || clean.includes("soundhelix.com")) return;
+      if (!u) return;
+      const s = String(u).trim();
+      if (!s || s.includes("soundhelix.com")) return;
+      if (s.startsWith("/api/stream")) {
+        if (!expanded.includes(s)) expanded.push(s);
+        return;
+      }
+      let clean = ensureHttps(s);
       clean = clean.replace("//preview.saavncdn.com", "//aac.saavncdn.com").replace("_96_p.mp4", "_160.mp4");
-      ["_96.mp4", "_160.mp4", "_320.mp4", "_48.mp4"].forEach((br) => {
+      ["_160.mp4", "_96.mp4", "_320.mp4", "_48.mp4"].forEach((br) => {
         ["_320.mp4", "_160.mp4", "_96.mp4", "_48.mp4", "_96_p.mp4"].forEach((orig) => {
           if (clean.includes(orig)) {
             const v = clean.replace(orig, br);
@@ -4703,18 +4751,27 @@ PLAYER_JS = r'''/* =============================================================
       });
       if (!expanded.includes(clean)) expanded.push(clean);
     });
+    // Always append a dynamic /api/stream 302 resolver fallback in case a CDN token fails
+    if (song.title) {
+      const streamFallback = "/api/stream?id=" + encodeURIComponent(song.id || "") +
+        "&title=" + encodeURIComponent(song.title || "") +
+        "&artist=" + encodeURIComponent(song.artist || "");
+      if (!expanded.includes(streamFallback)) expanded.push(streamFallback);
+    }
     return expanded;
   }
 
   function save() {
     try {
-      localStorage.setItem("musify_queue", JSON.stringify({ queue: state.queue.slice(0, 60), index: state.index }));
+      localStorage.setItem("musify_queue_v33", JSON.stringify({ queue: state.queue.slice(0, 60), index: state.index }));
     } catch (e) {}
   }
 
   function load() {
     try {
-      const d = JSON.parse(localStorage.getItem("musify_queue") || "null");
+      // Clear legacy queue key that could hold old soundhelix/stale objects
+      localStorage.removeItem("musify_queue");
+      const d = JSON.parse(localStorage.getItem("musify_queue_v33") || "null");
       if (d && Array.isArray(d.queue) && d.queue.length) {
         state.queue = d.queue.filter((x) => x && x.media_url && !String(x.media_url).includes("soundhelix.com"));
         state.index = (typeof d.index === "number" && d.index >= 0 && d.index < state.queue.length) ? d.index : 0;
@@ -4757,11 +4814,8 @@ PLAYER_JS = r'''/* =============================================================
         });
 
         if (freshRelated.length) {
-          // Insert fresh related songs right after the next 1-2 tracks so autoplay flows naturally
-          const insertPos = Math.min(state.queue.length, state.index + 2);
-          const before = state.queue.slice(0, insertPos);
-          const after = state.queue.slice(insertPos);
-          state.queue = before.concat(freshRelated, after);
+          // ALWAYS append fresh related songs to the END of state.queue so we NEVER overwrite Song 2 or Song 3!
+          state.queue = state.queue.concat(freshRelated);
           renderQueue();
           save();
         }
@@ -5001,154 +5055,106 @@ PLAYER_JS = r'''/* =============================================================
       </div>`).join("");
   }
 
-  // ---- In-Memory RAM Blob Pre-Caching Engine (Eliminates Screen-Off & Lock-Screen Buffering/Cutting!) ----
-  // When a phone screen turns off, Android puts background TCP sockets into Doze mode, throttling HTTP 206 range chunks.
-  // By pre-downloading the full song file (~2.2 MB) into a RAM `blob:` URL while playing, playback reads 100% from RAM
-  // with ZERO network dependency when the screen is off or when unlocking the phone!
-  function registerSongBlobUrl(song, blobUrl) {
-    if (!song || !blobUrl) return;
-    song._blobUrl = blobUrl;
-    state.blobCacheOrder.push(song);
-    while (state.blobCacheOrder.length > 5) {
-      const oldest = state.blobCacheOrder.shift();
-      if (oldest && oldest !== current() && oldest._blobUrl) {
-        try { URL.revokeObjectURL(oldest._blobUrl); } catch (e) {}
-        oldest._blobUrl = null;
-        oldest._blobLoading = false;
-      }
-    }
+  function clearStartupTimers() {
+    if (state.startupTimer1) { clearTimeout(state.startupTimer1); state.startupTimer1 = null; }
+    if (state.startupTimer2) { clearTimeout(state.startupTimer2); state.startupTimer2 = null; }
+    if (state.startupWatchdogTimer) { clearTimeout(state.startupWatchdogTimer); state.startupWatchdogTimer = null; }
+    if (state.switchingGuardTimer) { clearTimeout(state.switchingGuardTimer); state.switchingGuardTimer = null; }
   }
 
-  async function preloadSongToRamBlob(song) {
-    if (!song || song._blobUrl || song._blobLoading) return song ? song._blobUrl : null;
-    const urls = urlsFor(song);
-    if (!urls.length) return null;
-    song._blobLoading = true;
-
-    // 1. Try direct fast CORS fetch of _96.mp4 / _160.mp4 from JioSaavn CDN
-    for (let i = 0; i < Math.min(2, urls.length); i++) {
-      try {
-        const resp = await fetch(urls[i], { mode: "cors", credentials: "omit" });
-        if (resp.ok) {
-          const blob = await resp.blob();
-          if (blob && blob.size > 100000) {
-            const bUrl = URL.createObjectURL(blob);
-            registerSongBlobUrl(song, bUrl);
-            song._blobLoading = false;
-            return bUrl;
-          }
-        }
-      } catch (e) {}
+  function advanceUrlOrNextTrack(s) {
+    if (!s || current() !== s) return;
+    const urls = urlsFor(s);
+    if (state.urlTry + 1 < urls.length) {
+      state.urlTry++;
+      startAudio();
+      return;
     }
-
-    // 2. Fallback to same-origin /api/download?inline=1 proxy
-    try {
-      const proxyUrl = "/api/download?inline=1&url=" + encodeURIComponent(urls[0]) +
-        "&id=" + encodeURIComponent(song.id || "") +
-        "&title=" + encodeURIComponent(song.title || "");
-      const resp = await fetch(proxyUrl);
-      if (resp.ok) {
-        const blob = await resp.blob();
-        if (blob && blob.size > 100000) {
-          const bUrl = URL.createObjectURL(blob);
-          registerSongBlobUrl(song, bUrl);
-          song._blobLoading = false;
-          return bUrl;
-        }
-      }
-    } catch (e) {}
-
-    song._blobLoading = false;
-    return null;
+    resolveFreshAndPlay(s);
   }
 
-  function preloadUpcomingQueueBlobs() {
-    const cur = current();
-    if (cur) {
-      preloadSongToRamBlob(cur).then((bUrl) => {
-        // If the current song finished downloading into RAM and is currently stalling/buffering on a remote URL,
-        // swap seamlessly to the RAM blob at the exact currentTime!
-        if (bUrl && current() === cur && audio.src && !audio.src.startsWith("blob:")) {
-          if (audio.readyState < 3 || (audio.paused && state.wantPlaying && !state.userPaused && !state.interruptedByExternal)) {
-            swapCurrentStreamToRamBlob();
-          }
-        }
-      });
-    }
-    // Pre-cache the next 2 unplayed language-compatible tracks in the queue so Song 2 & Song 3 play 100% from RAM!
-    let preloadedCount = 0;
-    for (let idx = state.index + 1; idx < state.queue.length && preloadedCount < 2; idx++) {
-      const cand = state.queue[idx];
-      if (cand && !hasSongBeenPlayed(cand) && (!cur || isLanguageCompatible(cur, cand))) {
-        preloadedCount++;
-        preloadSongToRamBlob(cand);
-      }
-    }
-  }
-
-  function swapCurrentStreamToRamBlob() {
-    const s = current();
-    if (!s || !s._blobUrl || !audio.src || audio.src.startsWith("blob:")) return false;
-    const savedTime = audio.currentTime || 0;
-    const dur = audio.duration || 0;
-    if (dur > 15 && (dur - savedTime) <= 1.5) return false;
-    state.switchingTrack = true;
-    audio.src = s._blobUrl;
-    try {
-      audio.currentTime = savedTime;
-    } catch (e) {
-      audio.addEventListener("loadedmetadata", function onMeta() {
-        audio.removeEventListener("loadedmetadata", onMeta);
-        try { audio.currentTime = savedTime; } catch (err) {}
-      });
-    }
-    const p = audio.play();
-    if (p && p.then) {
-      p.then(() => { state.switchingTrack = false; }).catch(() => { state.switchingTrack = false; });
-    } else {
-      state.switchingTrack = false;
-    }
-    return true;
-  }
-
-  // ---- Pure Synchronous Audio Starter (Uses RAM Blob when ready for zero screen-off buffering!) ----
+  // ---- Pure Synchronous Audio Starter with Multi-Stage Startup Watchdog ----
   function startAudio() {
     const s = current();
     if (!s) return;
+    clearStartupTimers();
+
     state.wantPlaying = true;
     state.userPaused = false;
     state.interruptedByExternal = false;
     state.switchingTrack = true;
+    state.trackLoadStartTs = Date.now();
+    state.lastProgressTime = 0;
+    state.lastProgressTs = Date.now();
     acquireWakeLock();
 
     const urls = urlsFor(s);
-    if (!s._blobUrl && !urls.length) {
+    if (!urls.length) {
       state.switchingTrack = false;
       resolveFreshAndPlay(s);
       return;
     }
-    // Prefer in-memory RAM Blob URL if already pre-cached (0 network calls during lock-screen / screen-off!)
-    const chosenUrl = (s._blobUrl && state.urlTry === 0)
-      ? s._blobUrl
-      : urls[Math.min(state.urlTry, urls.length - 1)];
 
+    const chosenUrl = urls[Math.min(state.urlTry, urls.length - 1)];
     audio.autoplay = true;
     audio.volume = 1.0;
     audio.src = chosenUrl;
+    try { audio.load(); } catch (e) {}
 
-    const p = audio.play();
-    if (p && p.then) {
-      p.then(() => { state.switchingTrack = false; }).catch(() => { state.switchingTrack = false; });
-    } else {
+    const attemptPlay = () => {
+      if (!state.wantPlaying || state.userPaused || current() !== s) return;
+      state.interruptedByExternal = false;
+      const p = audio.play();
+      if (p && p.then) {
+        p.then(() => {
+          state.interruptedByExternal = false;
+          setPlayIcon(true);
+        }).catch(() => {
+          // Do NOT set switchingTrack = false or interruptedByExternal = true here!
+          // Browser is still fetching headers for Song 2 / Song 3; loadeddata / canplay / startup timers will play it.
+        });
+      }
+    };
+
+    attemptPlay();
+
+    // Pulse 1 (+700ms): if metadata/frames just arrived and audio is still paused, kick play()
+    state.startupTimer1 = setTimeout(() => {
+      if (state.wantPlaying && !state.userPaused && current() === s && audio.paused && !audio.ended) {
+        attemptPlay();
+      }
+    }, 700);
+
+    // Pulse 2 (+1800ms): second kick if 5G network took 1.5s to buffer Song 3
+    state.startupTimer2 = setTimeout(() => {
+      if (state.wantPlaying && !state.userPaused && current() === s && audio.paused && !audio.ended) {
+        attemptPlay();
+      }
+    }, 1800);
+
+    // Release switchingTrack guard after 4s
+    state.switchingGuardTimer = setTimeout(() => {
       state.switchingTrack = false;
-    }
+    }, 4000);
+
+    // Failover Watchdog (+4500ms): if Song 3 still hasn't advanced past 0.05s, switch to next bitrate URL or next song!
+    state.startupWatchdogTimer = setTimeout(() => {
+      if (!state.wantPlaying || state.userPaused || current() !== s) return;
+      if (audio.paused || audio.currentTime < 0.05) {
+        if (audio.readyState >= 2 && audio.paused) {
+          const p = audio.play();
+          if (p && p.catch) {
+            p.catch(() => advanceUrlOrNextTrack(s));
+          }
+        } else {
+          advanceUrlOrNextTrack(s);
+        }
+      }
+    }, 4500);
 
     if ("mediaSession" in navigator) {
       try { navigator.mediaSession.playbackState = "playing"; } catch (e) {}
     }
-
-    // Kick off RAM Blob pre-caching for current + next 2 songs
-    preloadUpcomingQueueBlobs();
   }
 
   async function resolveFreshAndPlay(s) {
@@ -5183,21 +5189,17 @@ PLAYER_JS = r'''/* =============================================================
     renderQueue();
     save();
 
-    // Fetch more related songs in background if needed
+    // Fetch more related songs in background and append to the END of queue
     const remainingUnplayed = state.queue.slice(state.index + 1).filter((x) => !hasSongBeenPlayed(x));
-    if (triggerSimilarPrefetch || remainingUnplayed.length < 10) {
-      prefetchSimilarSongs(s).then(() => {
-        preloadUpcomingQueueBlobs();
-      }).catch(() => {});
+    if (triggerSimilarPrefetch || remainingUnplayed.length < 8) {
+      prefetchSimilarSongs(s);
     }
   }
 
   // ---- 100% SYNCHRONOUS Next Track Selector (Critical for Screen-Off & Foreground Autoplay!) ----
-  // Must NOT be async before playAt() so `ended` event calls `audio.src = ...; audio.play();` in the exact same call stack tick!
   function next() {
     if (!state.queue.length) return;
 
-    // Repeat ONE mode only when explicitly toggled to repeat === 2
     if (state.repeat === 2) {
       audio.currentTime = 0;
       audio.play().catch(() => {});
@@ -5265,10 +5267,10 @@ PLAYER_JS = r'''/* =============================================================
       state.wantPlaying = true;
       audio.play().catch(() => {});
     } else {
-      // Explicit user pause: mark userPaused = true so it does NOT auto-resume until user taps Play
       state.userPaused = true;
       state.interruptedByExternal = false;
       state.wantPlaying = false;
+      clearStartupTimers();
       audio.pause();
     }
   }
@@ -5311,7 +5313,6 @@ PLAYER_JS = r'''/* =============================================================
   attachSwipeGesture($("miniPlayer"));
   attachSwipeGesture($("npSwipeZone"));
 
-  // ---- Full-Screen Sheet Helpers & Android Back Button Guard ----
   try {
     if (!history.state || !history.state.musifyBase) {
       history.replaceState({ musifyBase: true, view: "home" }, "", location.pathname);
@@ -5451,7 +5452,6 @@ PLAYER_JS = r'''/* =============================================================
         return;
       }
 
-      // Build a full, immediate queue in memory (15+ songs ready at t=0ms) so `ended` never runs out of songs!
       const chosenKey = canonicalSongKey(chosen);
       const seen = new Set([chosenKey]);
       const cleanQueue = [chosen];
@@ -5471,7 +5471,7 @@ PLAYER_JS = r'''/* =============================================================
       appendUnique(rawList.slice((startIndex || 0) + 1));
       appendUnique(rawList.slice(0, startIndex || 0));
 
-      // 2. Also top up with window.allLoadedSongs so queue has plenty of tracks immediately
+      // 2. Also top up with window.allLoadedSongs so queue has 15+ tracks immediately
       if (cleanQueue.length < 15 && Array.isArray(window.allLoadedSongs)) {
         appendUnique(window.allLoadedSongs);
       }
@@ -5488,10 +5488,6 @@ PLAYER_JS = r'''/* =============================================================
         updateInfo();
         renderQueue();
         save();
-        setTimeout(() => {
-          if (state.queue[0]) preloadSongToRamBlob(state.queue[0]);
-          if (state.queue[1]) preloadSongToRamBlob(state.queue[1]);
-        }, 1200);
       }
     },
     currentSong: current,
@@ -5516,6 +5512,7 @@ PLAYER_JS = r'''/* =============================================================
       renderQueue(); save();
     },
     clear() {
+      clearStartupTimers();
       audio.pause();
       audio.removeAttribute("src");
       state.queue = []; state.index = -1;
@@ -5526,7 +5523,15 @@ PLAYER_JS = r'''/* =============================================================
     toggle
   };
 
-  // ---- Smart Audio Focus: Stops for Instagram/YouTube/Phone Calls & Auto-Resumes When Done ----
+  // ---- Unified Debounced Auto-Next Trigger ----
+  function triggerAutoNext() {
+    const now = Date.now();
+    if (now - state.lastTrackAdvanceTime < 1800) return;
+    state.lastTrackAdvanceTime = now;
+    state.interruptedByExternal = false;
+    next();
+  }
+
   function tryResumeAfterExternalInterruption() {
     if (!state.interruptedByExternal || state.userPaused || !state.wantPlaying) return;
     if (!audio.paused || audio.ended) return;
@@ -5535,14 +5540,30 @@ PLAYER_JS = r'''/* =============================================================
       p.then(() => {
         state.interruptedByExternal = false;
         setPlayIcon(true);
-      }).catch(() => {
-        // Still in phone call or external audio still holds exclusive focus; will retry on next signal
-      });
+      }).catch(() => {});
     }
   }
 
+  function onStreamReadyToPlay() {
+    if (!state.wantPlaying || state.userPaused || !audio.paused || audio.ended) return;
+    // Always start playback on stream readiness unless a verified mid-song external interruption is active
+    const isStartingTrack = state.switchingTrack || (Date.now() - state.trackLoadStartTs < 4500) || (audio.currentTime < 2.0);
+    if (isStartingTrack || !state.interruptedByExternal) {
+      state.interruptedByExternal = false;
+      audio.play().catch(() => {});
+    }
+  }
+
+  audio.addEventListener("loadedmetadata", () => {
+    if ($("totalDuration")) $("totalDuration").textContent = fmt(audio.duration);
+    onStreamReadyToPlay();
+  });
+
+  audio.addEventListener("loadeddata", onStreamReadyToPlay);
+  audio.addEventListener("canplay", onStreamReadyToPlay);
+  audio.addEventListener("canplaythrough", onStreamReadyToPlay);
+
   audio.addEventListener("play", () => {
-    state.switchingTrack = false;
     state.interruptedByExternal = false;
     setPlayIcon(true);
     acquireWakeLock();
@@ -5551,126 +5572,157 @@ PLAYER_JS = r'''/* =============================================================
   audio.addEventListener("playing", () => {
     state.switchingTrack = false;
     state.interruptedByExternal = false;
+    state.lastProgressTs = Date.now();
+    clearStartupTimers();
     setPlayIcon(true);
   });
 
-  audio.addEventListener("canplay", () => {
-    // Only auto-start on canplay when switching tracks (never fight an active external interruption!)
-    if (state.wantPlaying && !state.userPaused && !state.interruptedByExternal && audio.paused && !audio.ended) {
-      audio.play().catch(() => {});
-    }
-  });
-
-  audio.addEventListener("loadeddata", () => {
-    if (state.wantPlaying && !state.userPaused && !state.interruptedByExternal && audio.paused && !audio.ended) {
-      audio.play().catch(() => {});
-    }
-  });
-
-  // ---- Unified Debounced Auto-Next Trigger (Handles native `ended` + .mp4 container EOF mismatch!) ----
-  function triggerAutoNext() {
-    const now = Date.now();
-    if (now - state.lastTrackAdvanceTime < 2500) return;
-    state.lastTrackAdvanceTime = now;
-    state.interruptedByExternal = false;
-    next();
-  }
-
-  // If network stream ever buffers/stalls (especially when screen is turned off or locked),
-  // immediately switch the active song to its preloaded in-memory RAM Blob at the exact same timestamp!
-  function handleMidSongBufferStall() {
-    if (!state.wantPlaying || state.userPaused || state.interruptedByExternal || state.switchingTrack) return;
+  audio.addEventListener("waiting", () => {
+    state.lastWaitingTs = Date.now();
     const dur = audio.duration || 0;
     const curT = audio.currentTime || 0;
-    if (dur > 15 && (dur - curT) <= 1.5) {
+    if (dur > 15 && (dur - curT) <= 2.2) {
       triggerAutoNext();
-      return;
     }
-    swapCurrentStreamToRamBlob();
-  }
+  });
 
-  audio.addEventListener("waiting", handleMidSongBufferStall);
-  audio.addEventListener("stalled", handleMidSongBufferStall);
+  audio.addEventListener("stalled", () => {
+    state.lastWaitingTs = Date.now();
+    const dur = audio.duration || 0;
+    const curT = audio.currentTime || 0;
+    if (dur > 15 && (dur - curT) <= 2.2) {
+      triggerAutoNext();
+    }
+  });
 
   audio.addEventListener("pause", () => {
-    if (state.switchingTrack) return;
     const dur = audio.duration || 0;
     const curT = audio.currentTime || 0;
-    // Catch JioSaavn .mp4 containers that stop 0.2s-1.8s before nominal duration without emitting `ended`
-    if (audio.ended || (dur > 15 && (dur - curT) <= 1.8)) {
+
+    // 1. If pause happened within 2.5s of track end, it is EOF (.mp4 container duration mismatch) -> advance immediately!
+    if (audio.ended || (dur > 15 && (dur - curT) <= 2.5)) {
       triggerAutoNext();
       return;
     }
-    setPlayIcon(false);
-    // If wantPlaying is still true and user did NOT tap pause, then Instagram, YouTube, or a Phone Call
-    // just requested OS AudioFocus! Yield immediately (do NOT fight it) and arm auto-resume for when it finishes!
-    if (state.wantPlaying && !state.userPaused) {
-      state.interruptedByExternal = true;
-      state.interruptedAt = Date.now();
+
+    // 2. If user explicitly clicked pause, do nothing
+    if (state.userPaused || !state.wantPlaying) {
+      setPlayIcon(false);
+      return;
     }
+
+    // 3. CRITICAL FIX FOR SONG 3+ & SCREEN-OFF BUFFERING:
+    // If this pause happened during track loading (`switchingTrack`, `currentTime < 2.0`, or within 4.5s of `startAudio()`)
+    // OR because the network buffer briefly ran low (`audio.readyState < 3` or within 3s of `waiting`/`stalled`),
+    // it is a BROWSER BUFFER/LOAD PAUSE — NOT Instagram/YouTube! Do NOT set `interruptedByExternal = true`!
+    const sinceLoad = Date.now() - state.trackLoadStartTs;
+    const sinceWait = Date.now() - state.lastWaitingTs;
+    if (state.switchingTrack || sinceLoad < 4500 || curT < 2.0 || audio.readyState < 3 || sinceWait < 3000) {
+      state.interruptedByExternal = false;
+      setTimeout(() => {
+        if (state.wantPlaying && !state.userPaused && audio.paused && !audio.ended) {
+          audio.play().catch(() => {});
+        }
+      }, 350);
+      return;
+    }
+
+    // 4. Otherwise (song was playing smoothly mid-track with full buffer `readyState >= 3` and `curT >= 2.0`),
+    // Instagram, YouTube, or a Phone Call took OS AudioFocus! Yield cleanly and arm auto-resume.
+    setPlayIcon(false);
+    state.interruptedByExternal = true;
+    state.interruptedAt = Date.now();
   });
 
-  // 1. Resume immediately when returning to Musify from Instagram, YouTube, or Phone Call screen
+  // Resume when returning to Musify from Instagram, YouTube, or Lock Screen
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       acquireWakeLock();
-      if (state.interruptedByExternal && state.wantPlaying && !state.userPaused) {
-        tryResumeAfterExternalInterruption();
+      if (state.wantPlaying && !state.userPaused && audio.paused && !audio.ended) {
+        state.interruptedByExternal = false;
+        audio.play().catch(() => {});
       }
-    } else {
-      // Screen just turned off or switched to background: ensure upcoming songs are in RAM Blob cache
-      preloadUpcomingQueueBlobs();
     }
   });
 
   window.addEventListener("focus", () => {
-    if (state.interruptedByExternal && state.wantPlaying && !state.userPaused) {
-      tryResumeAfterExternalInterruption();
+    if (state.wantPlaying && !state.userPaused && audio.paused && !audio.ended) {
+      state.interruptedByExternal = false;
+      audio.play().catch(() => {});
     }
   });
 
   window.addEventListener("pageshow", () => {
-    if (state.interruptedByExternal && state.wantPlaying && !state.userPaused) {
-      tryResumeAfterExternalInterruption();
+    if (state.wantPlaying && !state.userPaused && audio.paused && !audio.ended) {
+      state.interruptedByExternal = false;
+      audio.play().catch(() => {});
     }
   });
 
-  // 2. Resume immediately when a Phone Call ends (hardware audio route switches back from voice call to media)
+  // Resume immediately when a Phone Call ends (hardware audio route change)
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
     try {
       navigator.mediaDevices.addEventListener("devicechange", () => {
-        if (state.interruptedByExternal && state.wantPlaying && !state.userPaused) {
-          setTimeout(tryResumeAfterExternalInterruption, 350);
-          setTimeout(tryResumeAfterExternalInterruption, 1200);
+        if (state.wantPlaying && !state.userPaused && audio.paused) {
+          setTimeout(() => {
+            if (state.wantPlaying && !state.userPaused && audio.paused) {
+              state.interruptedByExternal = false;
+              audio.play().catch(() => {});
+            }
+          }, 400);
+          setTimeout(() => {
+            if (state.wantPlaying && !state.userPaused && audio.paused) {
+              state.interruptedByExternal = false;
+              audio.play().catch(() => {});
+            }
+          }, 1400);
         }
       });
     } catch (e) {}
   }
 
-  // 3. Foreground Call-End Watcher: if a phone call interrupted Musify while Musify stayed visible on screen
-  //    (or once external audio releases focus while Musify is visible), probe gently every 2.5s ONLY when !document.hidden
-  //    so we NEVER steal audio from Instagram/YouTube while you are inside Instagram/YouTube!
+  // Lightweight 1.5s Watchdog for:
+  // (a) EOF .mp4 container pauses (within 2.5s of duration)
+  // (b) Buffer-starvation pauses (`!interruptedByExternal && audio.paused`) in both screen-on and screen-off modes
+  // (c) Foreground Phone Call completion (`!document.hidden && interruptedByExternal`)
   setInterval(() => {
-    if (!document.hidden && state.interruptedByExternal && state.wantPlaying && !state.userPaused && audio.paused) {
+    if (!state.wantPlaying || state.userPaused || !current()) return;
+
+    const dur = audio.duration || 0;
+    const curT = audio.currentTime || 0;
+
+    // (a) Catch .mp4 track that paused near the end without emitting `ended`
+    if (audio.ended || (audio.paused && dur > 15 && (dur - curT) <= 2.5)) {
+      triggerAutoNext();
+      return;
+    }
+
+    // (b) If paused due to buffer/network/track-switch (NOT an external app interruption), resume as soon as data is available
+    if (audio.paused && !state.interruptedByExternal) {
+      audio.play().catch(() => {});
+      return;
+    }
+
+    // (c) If interrupted by a phone call or external audio while Musify is visible, gently probe after 2.2s
+    if (!document.hidden && state.interruptedByExternal && audio.paused) {
       if (Date.now() - state.interruptedAt >= 2200) {
         tryResumeAfterExternalInterruption();
       }
     }
-  }, 2500);
+  }, 1500);
 
-  // PRIMARY AUTOPLAY TRIGGER 1: Native `ended` listener
+  // PRIMARY AUTOPLAY TRIGGER: Native `ended` listener
   audio.addEventListener("ended", () => {
     triggerAutoNext();
-  });
-
-  audio.addEventListener("loadedmetadata", () => {
-    if ($("totalDuration")) $("totalDuration").textContent = fmt(audio.duration);
   });
 
   audio.addEventListener("timeupdate", () => {
     if (audio.duration && isFinite(audio.duration)) {
       const curT = audio.currentTime;
       const dur = audio.duration;
+      state.lastProgressTime = curT;
+      state.lastProgressTs = Date.now();
+
       const pct = (curT / dur) * 100;
       if ($("progressBar")) $("progressBar").value = pct;
       if ($("miniProgressFill")) $("miniProgressFill").style.width = pct + "%";
@@ -5678,13 +5730,6 @@ PLAYER_JS = r'''/* =============================================================
 
       syncLyricsToTime(curT);
 
-      // PRIMARY AUTOPLAY TRIGGER 2: Advance seamlessly 0.55s before track end while hardware AudioFocus is 100% active!
-      if (dur > 15 && (dur - curT) <= 0.55 && !state.switchingTrack && state.wantPlaying && !state.userPaused) {
-        triggerAutoNext();
-        return;
-      }
-
-      // Update lockscreen MediaSession position only once every 5s when screen is visible
       const now = Date.now();
       if (!document.hidden && (now - state.lastMediaPosUpdateTs >= 5000) && "mediaSession" in navigator && navigator.mediaSession.setPositionState) {
         state.lastMediaPosUpdateTs = now;
@@ -5702,19 +5747,7 @@ PLAYER_JS = r'''/* =============================================================
   audio.addEventListener("error", () => {
     const s = current();
     if (!s) return;
-    // If a blob URL ever errored, clear it and try the CDN URLs
-    if (s._blobUrl && audio.src && audio.src.startsWith("blob:")) {
-      s._blobUrl = null;
-      startAudio();
-      return;
-    }
-    const urls = urlsFor(s);
-    if (state.urlTry + 1 < urls.length) {
-      state.urlTry++;
-      startAudio();
-      return;
-    }
-    resolveFreshAndPlay(s);
+    advanceUrlOrNextTrack(s);
   });
 
   if ($("btnPlay")) $("btnPlay").addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
@@ -5771,8 +5804,6 @@ PLAYER_JS = r'''/* =============================================================
         audio.play().catch(() => {});
       });
       navigator.mediaSession.setActionHandler("pause", () => {
-        // Note: On some Android builds, OS transient audio focus loss also invokes mediaSession pause;
-        // if document.hidden is true, allow auto-resume when user returns to app!
         if (!document.hidden) {
           state.userPaused = true;
           state.wantPlaying = false;
@@ -7153,42 +7184,22 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-spotify-v31";
-const ASSETS = [
-  "/static/css/style.css",
-  "/static/js/player.js",
-  "/static/js/app.js",
-  "/manifest.json"
-];
+SW_JS = r'''const CACHE = "musify-spotify-v33";
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).catch(() => {}));
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
   );
   self.clients.claim();
 });
 
 self.addEventListener("fetch", (e) => {
-  const req = e.request;
-  if (req.method !== "GET") return;
-  const url = new URL(req.url);
-  if (url.origin !== location.origin || url.pathname.startsWith("/api/")) return;
-  e.respondWith(
-    fetch(req)
-      .then((res) => {
-        if (res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-        }
-        return res;
-      })
-      .catch(() => caches.match(req))
-  );
+  // Always fetch fresh from network so updates apply immediately on mobile
+  return;
 });
 '''
 
@@ -7308,7 +7319,13 @@ def _no_cache(resp: Response) -> Response:
 
 @app.route("/")
 def index():
-    return _no_cache(Response(INDEX_HTML, mimetype="text/html"))
+    inlined_html = (
+        INDEX_HTML
+        .replace('<link rel="stylesheet" href="/static/css/style.css?v=33">', f"<style>{STYLE_CSS}</style>")
+        .replace('<script src="/static/js/player.js?v=33"></script>', f"<script>{PLAYER_JS}</script>")
+        .replace('<script src="/static/js/app.js?v=33"></script>', f"<script>{APP_JS}</script>")
+    )
+    return _no_cache(Response(inlined_html, mimetype="text/html"))
 
 
 @app.route("/static/<path:filename>")
@@ -7583,6 +7600,35 @@ def api_save_profile():
         return _err("Valid numeric age is required", 400)
     except Exception as e:
         return _err(e)
+
+
+# --- Instant 302 Stream Resolver Endpoint (Zero-Bandwidth Direct CDN Redirect) ---
+
+@app.route("/api/stream", methods=["GET"])
+def api_stream_redirect():
+    """
+    Resolves a song by ID or search query and issues a 302 redirect directly to the live
+    https://aac.saavncdn.com/..._160.mp4 stream so <audio> plays with native HTTP 206 range support.
+    """
+    from flask import redirect
+    song_id = request.args.get("id", "").strip()
+    q = request.args.get("q", "").strip()
+    title = request.args.get("title", "").strip()
+    artist = request.args.get("artist", "").strip()
+
+    if song_id and not song_id.startswith(("telugu_", "hindi_", "english_", "devara_", "raktacharitra_", "og_", "pushpa2_", "guntur_", "hinanna_")):
+        s_obj = get_song(song_id, lyrics=False)
+        if s_obj and s_obj.get("media_url") and "aac.saavncdn.com" in str(s_obj.get("media_url")):
+            return redirect(s_obj["media_url"], code=302)
+
+    search_q = q or f"{title} {artist.split(',')[0] if artist else ''}".strip() or "Fear Song Devara Telugu"
+    results = search_for_song(search_q, lyrics=False, songdata=True, page=1, limit=5)
+    if isinstance(results, list):
+        for item in results:
+            if isinstance(item, dict) and item.get("media_url") and "aac.saavncdn.com" in str(item.get("media_url")):
+                return redirect(item["media_url"], code=302)
+
+    return _err("Stream not found", 404)
 
 
 # --- Full-Song File Download Endpoint ---
