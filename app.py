@@ -705,19 +705,36 @@ def _is_junk_or_fake_cover(song: Dict[str, Any]) -> bool:
 
 
 def _is_telugu_track(song: Dict[str, Any]) -> bool:
-    """Returns True if the song is tagged as Telugu or belongs to our verified Telugu catalog."""
-    lang = str(song.get("language") or "").lower()
+    """Strictly returns True ONLY for Telugu songs (rejects Hindi, English, and Tamil songs)."""
+    lang = str(song.get("language") or "").lower().strip()
+    comb = f"{song.get('title', '')} {song.get('album', '')} {song.get('artist', '')}".lower()
+
+    # Explicitly reject Hindi, English, Punjabi, and Tamil-only tracks
+    non_telugu_markers = (
+        "[tamil]", "(tamil)", "[hindi]", "(hindi)", "blinding lights", "shape of you",
+        "believer", "starboy", "closer", "cheap thrills", "unstoppable", "calm down",
+        "the weeknd", "ed sheeran", "imagine dragons", "alan walker", "chainsmokers",
+        "justin bieber", "dua lipa", "arijit singh", "kesariya", "stree 2", "kabir singh",
+        "aashiqui 2", "veezha veera", "senjudare", "radhimaa", "god mode", "katchi sera",
+        "aasa kooda", "raga of revenge"
+    )
+    if any(nm in comb for nm in non_telugu_markers):
+        return False
+
+    if lang in ("hindi", "english", "punjabi", "malayalam", "kannada", "bhojpuri", "haryanvi"):
+        return False
+    if lang == "tamil" and "telugu" not in comb:
+        return False
     if lang == "telugu":
         return True
-    comb = f"{song.get('title', '')} {song.get('album', '')} {song.get('artist', '')}".lower()
+
     telugu_markers = (
         "telugu", "raktacharitra", "dorikithe", "katthula", "thudilenidhi", "dabbunnoda", "champaraa",
         "devara", "pushpa", "guntur kaaram", "kurchi", "daaku", "maestro", "baby oh baby",
         "hi nanna", "samayama", "aarya", "arya", "uppenantha", "ringa ringa", "og", "hungry cheetah",
         "salaar", "sooreede", "kalki", "sita ramam", "geetha govindam", "shyam singha roy",
         "sirivennela", "pokiri", "gabbar singh", "rangasthalam", "bommarillu", "athadu", "kushi",
-        "jalsa", "mirchi", "veera veera", "baagundu po", "singari", "nee gunde lona", "thaman",
-        "devi sri prasad", "anurag kulkarni", "ramajogayya", "kasarla shyam", "chandra bose"
+        "jalsa", "mirchi", "veera veera", "baagundu po", "singari", "nee gunde lona"
     )
     return any(m in comb for m in telugu_markers)
 
@@ -1735,7 +1752,7 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    cache_key = f"search_v28::{clean_q.lower()}::p{page}"
+    cache_key = f"search_v29::{clean_q.lower()}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1773,7 +1790,7 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     English (Ed Sheeran, The Weeknd), and Hindi hits in parallel.
     """
     cat = category.lower().strip()
-    cache_key = f"cat_v28::{cat}::p{page}"
+    cache_key = f"cat_v29::{cat}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1783,17 +1800,17 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
             "Fear Song Devara Telugu",
             "Hungry Cheetah OG",
-            "Veezha Veera OM Chapter 1",
+            "https://www.jiosaavn.com/album/veera-veera-from-om-chapter-1-udhiram-the-blood-wood-telugu/9w-h0Mzb1TE_",
+            "https://www.jiosaavn.com/album/dude-telugu-original-motion-picture-soundtrack/IYTxE9Yvbyc_",
             "Kissik Pushpa 2 Telugu",
             "Kurchi Madathapetti Guntur Kaaram",
             "The Rage of Daaku Daaku Maharaaj",
             "Baby Oh Baby Maestro",
             "Samayama Hi Nanna",
-            "Raga of Revenge Anirudh",
-            "Radhimaa Sai Abhyankkar",
-            "God Mode Karuppu",
-            "Ed Sheeran Shape of You",
-            "The Weeknd Blinding Lights"
+            "Chuttamalle Devara",
+            "Uppenantha",
+            "Sooreede Salaar",
+            "Inthandham Sita Ramam"
         ],
         "highbeam": [
             "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
@@ -1803,21 +1820,20 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Dorikithe Chastavu",
             "Raktacharitra",
             "Hungry Cheetah OG",
-            "Fear Song Devara",
+            "Fear Song Devara Telugu",
             "Ayudha Pooja Devara",
-            "Daaku Maharaaj Thaman",
+            "The Rage of Daaku",
             "Sooreede Salaar",
             "Sound of Salaar",
             "Jai Balayya Akhanda",
             "Akhanda Title Song",
             "Bheemla Nayak Title Song",
-            "Hukum Jailer",
-            "Vikram Title Track Anirudh",
+            "Hukum Reloaded Telugu",
             "Jagadame Pokiri",
             "Agni Skalana Chatrapathi"
         ],
         "itemsongs": [
-            "Kissik Pushpa 2",
+            "Kissik Pushpa 2 Telugu",
             "Oo Antava Pushpa",
             "Daavudi Devara",
             "Kurchi Madathapetti",
@@ -1842,24 +1858,25 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Kurchi Madathapetti Guntur Kaaram",
             "Pushpa Pushpa Pushpa 2",
             "Daavudi Devara",
-            "Fear Song Devara",
+            "Fear Song Devara Telugu",
             "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "Dorikithe Chastavu",
             "Hungry Cheetah OG",
-            "Daaku Maharaaj Thaman",
+            "The Rage of Daaku",
             "Boss Party Waltair Veerayya",
             "Jai Balayya Veera Simha Reddy",
-            "Naatu Naatu RRR",
+            "Naatu Naatu RRR Telugu",
             "Bheemla Nayak Title Song",
             "Dimaak Kharaab iSmart Shankar",
             "Dekho Dekho Gabbar Singh",
             "Dole Dole Pokiri"
         ],
         "telugu": [
-            "Devara Telugu",
+            "https://www.jiosaavn.com/album/devara-part-1-telugu/kArqawD7cKk_",
+            "https://www.jiosaavn.com/album/daaku-maharaaj/SI2T091Z92g_",
+            "https://www.jiosaavn.com/album/dude-telugu-original-motion-picture-soundtrack/IYTxE9Yvbyc_",
+            "https://www.jiosaavn.com/album/veera-veera-from-om-chapter-1-udhiram-the-blood-wood-telugu/9w-h0Mzb1TE_",
             "Pushpa 2 Telugu",
             "Guntur Kaaram",
-            "Daaku Maharaaj Thaman",
             "Hi Nanna",
             "Kalki 2898 AD Telugu",
             "Salaar Telugu",
@@ -1874,11 +1891,8 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "https://www.jiosaavn.com/song/boom-boom-from-dude-telugu/QTEbXC1RQ1E",
             "https://www.jiosaavn.com/song/singari-from-dude-telugu/KToeZCsHQ18",
             "https://www.jiosaavn.com/song/baagundu-po-from-dude-telugu/CiIZRABoR3Q",
-            "https://www.jiosaavn.com/album/radhimaa-from-think-indie/waSqOF2IJ3g_",
-            "https://www.jiosaavn.com/song/god-mode-from-karuppu/HQdZYDxzGng",
             "Po Ve Po 3 Telugu",
             "Luckkanna Mate Nillu",
-            "Rowdy Baby Dhanush",
             "Fear Song Devara Telugu",
             "Hungry Cheetah OG"
         ],
@@ -1925,23 +1939,28 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
             "Pritam"
         ],
         "love": [
-            "Hi Nanna",
-            "Sita Ramam Telugu",
-            "Geetha Govindam",
-            "Sid Sriram Telugu",
-            "Arijit Singh",
-            "Ed Sheeran Perfect"
+            "Samayama Hi Nanna",
+            "Baby Oh Baby Maestro",
+            "Chuttamalle Devara",
+            "Inthandham Sita Ramam",
+            "Inkem Inkem Geetha Govindam",
+            "Uppenantha",
+            "Rooba Rooba Orange",
+            "Vintunnava Ye Maaya Chesave"
         ],
         "sad": [
-            "Orange Telugu",
-            "Arya 2",
-            "3 Telugu Dhanush",
-            "Majili Telugu",
-            "Aashiqui 2",
-            "Kabir Singh"
+            "My Love Is Gone",
+            "Karige Loga",
+            "O Range",
+            "Nenu Nuvvantu",
+            "Po Ve Po 3 Telugu",
+            "Priyathama Neevachata Kusalama",
+            "Kanulanu Thaake",
+            "Adiga Adiga Ninnu Kori"
         ],
         "chill": [
             "Sirivennela Shyam Singha Roy",
+            "Samayama Hi Nanna",
             "Oohalu Gusagusalade",
             "Sammohanam",
             "Pellichoopulu",
@@ -1949,57 +1968,59 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
         ],
         "workout": [
             "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "Dorikithe Chastavu",
             "Hungry Cheetah OG",
-            "Salaar Telugu",
-            "Vikram Anirudh",
-            "Jailer Anirudh",
-            "Arjan Vailly",
-            "Believer Imagine Dragons"
+            "Fear Song Devara Telugu",
+            "The Rage of Daaku",
+            "Sooreede Salaar",
+            "Jai Balayya Akhanda",
+            "Bheemla Nayak Title Song"
         ],
         "drive": [
-            "Ye Maaya Chesave",
-            "Awara Telugu",
-            "Gharshana",
+            "Vintunnava Ye Maaya Chesave",
+            "Chiru Chiru Awara",
+            "Gharshana Telugu",
             "Manam Telugu",
-            "Blinding Lights The Weeknd"
+            "Rooba Rooba Orange",
+            "Samayama Hi Nanna"
         ],
         "party": [
-            "Kissik Pushpa 2",
+            "Kissik Pushpa 2 Telugu",
             "Oo Antava Pushpa",
             "Kurchi Madathapetti",
-            "Boss Party",
-            "Dj Tillu",
-            "Aaj Ki Raat Stree 2"
+            "Daavudi Devara",
+            "Boss Party Waltair Veerayya",
+            "Tillu Anna DJ Pedithe"
         ],
         "evergreen": [
             "SP Balasubrahmanyam Telugu",
             "KS Chithra Telugu",
             "Mani Sharma Telugu",
-            "Nuve Kavali",
-            "Kushi Pawan Kalyan",
-            "Okkadu Mahesh Babu"
+            "Nuvve Kavali",
+            "Ammaye Sannaga Kushi",
+            "Cheliya Cheliya Kushi",
+            "Pilichina Ranantava Athadu"
         ],
         "devotional": [
             "Annamayya SPB",
-            "Shree Hanuman Chalisa",
-            "Namo Namo Kedarnath",
-            "Deva Deva Brahmastra"
+            "Govinda Namalu",
+            "Brahmam Okate",
+            "Om Namo Venkatesaya"
         ],
         "melodies": [
             "Sid Sriram Telugu",
             "Sirivennela Shyam Singha Roy",
-            "Hi Nanna",
-            "Sita Ramam Telugu",
-            "Geetha Govindam"
+            "Samayama Hi Nanna",
+            "Baby Oh Baby Maestro",
+            "Inthandham Sita Ramam",
+            "Inkem Inkem Geetha Govindam"
         ],
         "trending": [
-            "Devara Telugu",
-            "Pushpa 2 Telugu",
-            "Daaku Maharaaj Thaman",
-            "Alaakaa Loova",
-            "Stree 2",
-            "The Weeknd"
+            "Fear Song Devara Telugu",
+            "Kissik Pushpa 2 Telugu",
+            "The Rage of Daaku",
+            "https://www.jiosaavn.com/album/veera-veera-from-om-chapter-1-udhiram-the-blood-wood-telugu/9w-h0Mzb1TE_",
+            "https://www.jiosaavn.com/album/dude-telugu-original-motion-picture-soundtrack/IYTxE9Yvbyc_",
+            "Kurchi Madathapetti"
         ],
         "punjabi": [
             "AP Dhillon",
@@ -2011,9 +2032,15 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
 
     queries = category_queries.get(cat, [f"{cat} Telugu", f"{cat}"])
 
+    is_pure_telugu_cat = cat not in ("english", "hindi", "punjabi")
+
     if page == 1:
         max_alb = 4 if cat in ("highbeam", "itemsongs", "mass") else 2
         combined = _parallel_fetch_queries(queries, page=1, per_query_limit=10, max_per_album=max_alb)
+        if is_pure_telugu_cat:
+            telugu_only = [s for s in combined if _is_telugu_track(s)]
+            if len(telugu_only) >= 5:
+                combined = telugu_only
         if combined:
             _cache_set(cache_key, combined)
             return combined
@@ -2029,9 +2056,10 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
 
 def get_similar_songs_for_track(title: str, artist: str = "", album: str = "", exclude_csv: str = "") -> List[Dict[str, Any]]:
     """
-    Builds a Telugu-First Smart Auto-Radio queue based on the currently playing song.
-    - Gives #1 priority to Telugu songs (including Sai Abhyankkar's Telugu tracks from OM Chapter 1 & Dude Telugu).
-    - Caps tracks per artist (max 2 per singer in a suggestion batch) so playback never gets stuck on a single singer!
+    Language-Locked Smart Auto-Radio Queue:
+    - When a TELUGU song is playing, returns 100% ONLY TELUGU songs (never mixes English, Hindi, or Tamil!).
+    - When an ENGLISH song is playing, returns 100% ONLY ENGLISH songs.
+    - When a HINDI song is playing, returns 100% ONLY HINDI songs.
     """
     clean_t = _clean_track_title(title)
     clean_alb = _clean_track_title(album)
@@ -2049,68 +2077,7 @@ def get_similar_songs_for_track(title: str, artist: str = "", album: str = "", e
     meta_low = f"{title} {album} {artist}".lower()
     queries: List[str] = []
 
-    # 1. If playing Sai Abhyankkar / OM Chapter 1 / Karuppu / Radhimaa / Dude:
-    #    Queue his Telugu tracks FIRST + top Telugu Mass & Melody hits!
-    if any(k in meta_low for k in ("sai abhyankkar", "veezha", "veera veera", "alaakaa", "senjudare", "radhimaa", "karuppu", "god mode", "dude", "baagundu", "singari", "katchi sera", "aasa kooda")):
-        queries.extend([
-            "https://www.jiosaavn.com/album/veera-veera-from-om-chapter-1-udhiram-the-blood-wood-telugu/9w-h0Mzb1TE_",
-            "https://www.jiosaavn.com/song/alaakaa-loova-from-om-chapter-1-udhiram-the-blood-wood-telugu/OAAzVkZgcl0",
-            "https://www.jiosaavn.com/album/dude-telugu-original-motion-picture-soundtrack/IYTxE9Yvbyc_",
-            "Fear Song Devara Telugu",
-            "Hungry Cheetah OG",
-            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "Samayama Hi Nanna",
-            "Baby Oh Baby Maestro",
-            "Kissik Pushpa 2 Telugu",
-            "Kurchi Madathapetti",
-            "The Rage of Daaku",
-            "Uppenantha"
-        ])
-
-    # 2. Match Vibe / Base with strong Telugu Preference
-    highbeam_kws = (
-        "rakta", "raktacharitra", "dorikithe", "katthula", "thudilenidhi", "dabbunnoda", "champara",
-        "og", "hungry cheetah", "fear song", "ayudha pooja", "daaku", "rage of daaku", "salaar",
-        "sooreede", "akhanda", "jai balayya", "hukum", "jailer", "vikram", "bheemla", "jagadame",
-        "chatrapathi", "raga of revenge"
-    )
-    item_kws = (
-        "kissik", "oo antava", "daavudi", "kurchi", "pakka local", "jigelu rani", "ringa ringa",
-        "amalapuram", "kevvu keka", "dimaak kharaab", "swing zara", "blockbuster", "ratthaalu",
-        "ammadu", "daang daang", "bhoom bhaddhal", "junction lo", "top lesi poddi", "ippatikinka",
-        "pilla chao", "boss party", "dabidi dibidi"
-    )
-
-    if any(kw in meta_low for kw in highbeam_kws):
-        queries.extend([
-            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "https://www.jiosaavn.com/song/katthula-toh/QABaehx5dlY",
-            "Hungry Cheetah OG",
-            "Fear Song Devara Telugu",
-            "Ayudha Pooja Devara",
-            "The Rage of Daaku",
-            "Sooreede Salaar",
-            "https://www.jiosaavn.com/album/veera-veera-from-om-chapter-1-udhiram-the-blood-wood-telugu/9w-h0Mzb1TE_",
-            "Jai Balayya Akhanda",
-            "Bheemla Nayak Title Song",
-            "Jagadame Pokiri",
-            "Hukum Reloaded Telugu"
-        ])
-    elif any(kw in meta_low for kw in item_kws):
-        queries.extend([
-            "Kissik Pushpa 2 Telugu",
-            "Oo Antava Pushpa",
-            "Daavudi Devara",
-            "Kurchi Madathapetti",
-            "Pakka Local",
-            "Jigelu Rani",
-            "Ringa Ringa",
-            "Aa Ante Amalapuram",
-            "Kevvu Keka",
-            "Dimaak Kharaab",
-            "Blockbuster Sarrainodu"
-        ])
-    elif any(kw in meta_low for kw in (
+    english_kws = (
         "weeknd", "blinding lights", "starboy", "sheeran", "shape of you", "perfect",
         "imagine dragons", "believer", "thunder", "bones", "alan walker", "faded",
         "chainsmokers", "closer", "sia", "cheap thrills", "unstoppable", "calm down",
@@ -2118,7 +2085,16 @@ def get_similar_songs_for_track(title: str, artist: str = "", album: str = "", e
         "levitating", "senorita", "shawn mendes", "charlie puth", "attention", "coldplay",
         "bruno mars", "apt", "die with a smile", "heat waves", "dandelions", "night changes",
         "eminem", "mockingbird", "billie eilish", "lovely", "sunflower", "big dawgs"
-    )):
+    )
+    hindi_kws = (
+        "arijit", "kesariya", "stree 2", "arjan vailly", "pehle bhi main", "satranga",
+        "kabir singh", "aashiqui 2", "pritam", "jawan hindi", "apna bana le", "tum hi ho"
+    )
+
+    is_english_seed = any(kw in meta_low for kw in english_kws) and not _is_telugu_track({"title": title, "album": album, "artist": artist, "language": ""})
+    is_hindi_seed = (not is_english_seed) and any(kw in meta_low for kw in hindi_kws) and not _is_telugu_track({"title": title, "album": album, "artist": artist, "language": ""})
+
+    if is_english_seed:
         if main_artist:
             queries.append(main_artist)
         queries.extend([
@@ -2135,34 +2111,86 @@ def get_similar_songs_for_track(title: str, artist: str = "", album: str = "", e
             "Let Me Love You DJ Snake",
             "Stay The Kid LAROI Justin Bieber",
             "Levitating Dua Lipa",
-            "Heat Waves Glass Animals",
-            "Fear Song Devara Telugu",
-            "Samayama Hi Nanna"
+            "Heat Waves Glass Animals"
+        ])
+    elif is_hindi_seed:
+        if main_artist:
+            queries.append(main_artist)
+        queries.extend([
+            "Arijit Singh",
+            "Pehle Bhi Main Animal",
+            "Satranga Animal",
+            "Apna Bana Le",
+            "Kesariya Brahmastra",
+            "Tum Hi Ho Aashiqui 2",
+            "Bekhayali Kabir Singh"
         ])
     else:
-        # Default Telugu-First Mix + Famous English Hits woven in
-        if clean_alb and len(clean_alb) >= 3 and clean_alb.lower() not in ("unknown", "featured", "single"):
-            queries.append(f"{clean_alb} Telugu")
-        if main_artist:
-            queries.append(f"{main_artist} Telugu")
-        queries.extend([
-            "Samayama Hi Nanna",
-            "Baby Oh Baby Maestro",
-            "Chuttamalle Devara",
-            "https://www.jiosaavn.com/album/dude-telugu-original-motion-picture-soundtrack/IYTxE9Yvbyc_",
-            "https://www.jiosaavn.com/album/veera-veera-from-om-chapter-1-udhiram-the-blood-wood-telugu/9w-h0Mzb1TE_",
-            "Uppenantha",
-            "My Love Is Gone",
-            "Fear Song Devara Telugu",
-            "Hungry Cheetah OG",
-            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
-            "Kurchi Madathapetti",
-            "Kissik Pushpa 2 Telugu",
-            "https://www.jiosaavn.com/song/blinding-lights/RywnATp7dXQ",
-            "https://www.jiosaavn.com/song/shape-of-you/FiwmQD5DZUA",
-            "https://www.jiosaavn.com/song/believer/AjgiWTFzDms",
-            "Inthandham Sita Ramam"
-        ])
+        # 100% PURE TELUGU MODE — NEVER MIX ENGLISH, HINDI, OR TAMIL!
+        highbeam_kws = (
+            "rakta", "raktacharitra", "dorikithe", "katthula", "thudilenidhi", "dabbunnoda", "champara",
+            "og", "hungry cheetah", "fear song", "ayudha pooja", "daaku", "rage of daaku", "salaar",
+            "sooreede", "akhanda", "jai balayya", "hukum", "jailer", "vikram", "bheemla", "jagadame",
+            "chatrapathi"
+        )
+        item_kws = (
+            "kissik", "oo antava", "daavudi", "kurchi", "pakka local", "jigelu rani", "ringa ringa",
+            "amalapuram", "kevvu keka", "dimaak kharaab", "swing zara", "blockbuster", "ratthaalu",
+            "ammadu", "daang daang", "bhoom bhaddhal", "junction lo", "top lesi poddi", "ippatikinka",
+            "pilla chao", "boss party", "dabidi dibidi"
+        )
+        if any(kw in meta_low for kw in highbeam_kws):
+            queries.extend([
+                "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
+                "https://www.jiosaavn.com/song/katthula-toh/QABaehx5dlY",
+                "https://www.jiosaavn.com/song/thudilenidhi/JwkDRCZEZ14",
+                "Hungry Cheetah OG",
+                "Fear Song Devara Telugu",
+                "Ayudha Pooja Devara",
+                "The Rage of Daaku",
+                "Sooreede Salaar",
+                "https://www.jiosaavn.com/album/veera-veera-from-om-chapter-1-udhiram-the-blood-wood-telugu/9w-h0Mzb1TE_",
+                "Jai Balayya Akhanda",
+                "Bheemla Nayak Title Song",
+                "Jagadame Pokiri",
+                "Hukum Reloaded Telugu"
+            ])
+        elif any(kw in meta_low for kw in item_kws):
+            queries.extend([
+                "Kissik Pushpa 2 Telugu",
+                "Oo Antava Pushpa",
+                "Daavudi Devara",
+                "Kurchi Madathapetti",
+                "Pakka Local",
+                "Jigelu Rani",
+                "Ringa Ringa",
+                "Aa Ante Amalapuram",
+                "Kevvu Keka",
+                "Dimaak Kharaab",
+                "Blockbuster Sarrainodu",
+                "Bhoom Bhaddhal Krack"
+            ])
+        else:
+            if clean_alb and len(clean_alb) >= 3 and clean_alb.lower() not in ("unknown", "featured", "single"):
+                queries.append(f"{clean_alb} Telugu")
+            if main_artist:
+                queries.append(f"{main_artist} Telugu")
+            queries.extend([
+                "Samayama Hi Nanna",
+                "Baby Oh Baby Maestro",
+                "Chuttamalle Devara",
+                "https://www.jiosaavn.com/album/dude-telugu-original-motion-picture-soundtrack/IYTxE9Yvbyc_",
+                "https://www.jiosaavn.com/album/veera-veera-from-om-chapter-1-udhiram-the-blood-wood-telugu/9w-h0Mzb1TE_",
+                "Uppenantha",
+                "My Love Is Gone",
+                "Fear Song Devara Telugu",
+                "Hungry Cheetah OG",
+                "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
+                "Kurchi Madathapetti",
+                "Kissik Pushpa 2 Telugu",
+                "Inthandham Sita Ramam",
+                "Sirivennela Shyam Singha Roy"
+            ])
 
     unique_queries: List[str] = []
     for q_item in queries:
@@ -2171,9 +2199,7 @@ def get_similar_songs_for_track(title: str, artist: str = "", album: str = "", e
 
     raw_songs = _parallel_fetch_queries(unique_queries[:12], page=1, per_query_limit=8, max_per_album=2)
 
-    # Separate Telugu tracks vs Other tracks so Telugu ALWAYS gets #1 preference
-    telugu_bucket: List[Dict[str, Any]] = []
-    other_bucket: List[Dict[str, Any]] = []
+    filtered_out: List[Dict[str, Any]] = []
     artist_counts: Dict[str, int] = {}
 
     for s in raw_songs:
@@ -2181,7 +2207,12 @@ def get_similar_songs_for_track(title: str, artist: str = "", album: str = "", e
         sid = re.sub(r"[^a-z0-9]+", "", str(s.get("id") or "").lower())
         if dk in excluded_keys or (sid and sid in excluded_keys):
             continue
-        # Cap consecutive/total tracks by any single artist to max 3 per batch so one singer never dominates
+
+        # Enforce strict language lock: when playing Telugu, NEVER allow non-Telugu tracks!
+        if not is_english_seed and not is_hindi_seed:
+            if not _is_telugu_track(s):
+                continue
+
         primary_art = (str(s.get("artist") or "").split(",")[0]).strip().lower()
         if primary_art and artist_counts.get(primary_art, 0) >= 3:
             continue
@@ -2189,14 +2220,9 @@ def get_similar_songs_for_track(title: str, artist: str = "", album: str = "", e
             artist_counts[primary_art] = artist_counts.get(primary_art, 0) + 1
 
         excluded_keys.add(dk)
-        if _is_telugu_track(s):
-            telugu_bucket.append(s)
-        else:
-            other_bucket.append(s)
+        filtered_out.append(s)
 
-    # Put Telugu songs first!
-    combined_out = telugu_bucket + other_bucket
-    return combined_out[:30]
+    return filtered_out[:30]
 
 
 # =====================================================================
@@ -2235,7 +2261,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=28">
+  <link rel="stylesheet" href="/static/css/style.css?v=29">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -2794,19 +2820,19 @@ INDEX_HTML = r'''<!DOCTYPE html>
 
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/js/player.js?v=28"></script>
-  <script src="/static/js/app.js?v=28"></script>
+  <script src="/static/js/player.js?v=29"></script>
+  <script src="/static/js/app.js?v=29"></script>
   <script>
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-spotify-v28") caches.delete(k);
+          if (k !== "musify-spotify-v29") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=28").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=29").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -4693,6 +4719,30 @@ PLAYER_JS = r'''/* =============================================================
     return false;
   }
 
+  // Detects whether a song is Telugu vs English vs Hindi so Telugu playback NEVER mixes other languages
+  function detectSongLang(song) {
+    if (!song) return "telugu";
+    const rawLang = String(song.language || "").toLowerCase().trim();
+    const comb = (String(song.title || "") + " " + String(song.album || "") + " " + String(song.artist || "")).toLowerCase();
+    const engMarkers = ["blinding lights", "shape of you", "believer", "starboy", "closer", "cheap thrills", "unstoppable", "calm down", "the weeknd", "ed sheeran", "imagine dragons", "alan walker", "chainsmokers", "justin bieber", "dua lipa", "levitating", "senorita", "charlie puth", "coldplay", "bruno mars", "heat waves", "dandelions", "eminem", "billie eilish", "post malone"];
+    if (rawLang === "english" || engMarkers.some((m) => comb.includes(m))) return "english";
+    const hinMarkers = ["arijit singh", "kesariya", "stree 2", "kabir singh", "aashiqui 2", "apna bana le", "tum hi ho", "pehle bhi main", "satranga"];
+    if (rawLang === "hindi" || hinMarkers.some((m) => comb.includes(m))) return "hindi";
+    if (rawLang === "tamil" && !comb.includes("telugu")) return "tamil";
+    return "telugu";
+  }
+
+  function isLanguageCompatible(seedSong, candSong) {
+    if (!seedSong || !candSong) return true;
+    const seedLang = detectSongLang(seedSong);
+    const candLang = detectSongLang(candSong);
+    if (seedLang === "telugu") {
+      // When playing a Telugu song, strictly allow ONLY Telugu songs!
+      return candLang === "telugu";
+    }
+    return seedLang === candLang;
+  }
+
   // Orders streams [_160.mp4, _96.mp4, _320.mp4, _48.mp4] so mobile/bus networks never choke on 12MB 320kbps files
   function urlsFor(song) {
     if (!song) return [];
@@ -4828,12 +4878,14 @@ PLAYER_JS = r'''/* =============================================================
     }
     state.playedKeys.forEach((pk) => seenKeys.add(pk));
 
+    const curSeed = state.queue[state.index];
     const head = state.queue.slice(0, state.index + 1);
     const tail = [];
     for (let j = state.index + 1; j < state.queue.length; j++) {
       const item = state.queue[j];
       const ik = canonicalSongKey(item);
       if (!ik || seenKeys.has(ik) || hasSongBeenPlayed(item)) continue;
+      if (curSeed && !isLanguageCompatible(curSeed, item)) continue;
       seenKeys.add(ik);
       tail.push(item);
     }
@@ -5469,6 +5521,7 @@ PLAYER_JS = r'''/* =============================================================
 
       const addCandidate = (item) => {
         if (!item) return;
+        if (!isLanguageCompatible(chosen, item)) return;
         const ik = canonicalSongKey(item);
         if (!ik || seen.has(ik) || hasSongBeenPlayed(item)) return;
         const itemArtist = String(item.artist || "").split(",")[0].trim().toLowerCase();
@@ -7127,7 +7180,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-spotify-v28";
+SW_JS = r'''const CACHE = "musify-spotify-v29";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
