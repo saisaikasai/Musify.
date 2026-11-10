@@ -638,25 +638,30 @@ def get_playlist_id(input_url: str) -> Optional[str]:
 
 
 def _clean_track_title(raw_title: str) -> str:
-    """Removes parenthetical movie tags like (From 'Maestro') and normalizes title."""
+    """Removes parenthetical movie tags like (From 'Maestro'), language suffixes, and remix tags."""
     if not raw_title:
         return ""
     cleaned = html.unescape(str(raw_title))
     cleaned = re.sub(r"\s*[\(\[].*?[\)\]]", "", cleaned).strip()
     cleaned = re.sub(r"\s*-\s*.*$", "", cleaned).strip()
+    cleaned = re.sub(
+        r"\b(telugu|tamil|hindi|malayalam|kannada|remix|lofi|slowed|reverbed|club mix|version|female|male|ost|theme)\b",
+        "",
+        cleaned,
+        flags=re.IGNORECASE
+    ).strip()
     return cleaned or str(raw_title).strip()
 
 
 def _dedup_key(song: Dict[str, Any]) -> str:
-    """Generates a canonical deduplication key from the cleaned song title + language variant."""
+    """Generates a strict canonical deduplication key from the core song title so variations never repeat."""
     raw_t = str(song.get("title") or song.get("song") or "")
-    lang_tag = ""
-    for lt in ("telugu", "tamil", "hindi", "unplugged", "remix"):
-        if lt in raw_t.lower():
-            lang_tag += "_" + lt
     base_t = _clean_track_title(raw_t).lower()
     base_t = re.sub(r"[^a-z0-9]+", "", base_t)
-    return (base_t + lang_tag) if base_t else str(song.get("id", ""))
+    if len(base_t) >= 3:
+        return base_t
+    fallback_t = re.sub(r"[^a-z0-9]+", "", raw_t.lower())
+    return fallback_t or str(song.get("id", ""))
 
 
 JUNK_KEYWORDS = (
@@ -1536,7 +1541,7 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    cache_key = f"search_v23::{clean_q.lower()}::p{page}"
+    cache_key = f"search_v24::{clean_q.lower()}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1574,7 +1579,7 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     English (Ed Sheeran, The Weeknd), and Hindi hits in parallel.
     """
     cat = category.lower().strip()
-    cache_key = f"cat_v23::{cat}::p{page}"
+    cache_key = f"cat_v24::{cat}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1804,6 +1809,146 @@ def get_category_songs(category: str, page: int = 1) -> List[Dict[str, Any]]:
     return FALLBACK_CATALOG
 
 
+def get_similar_songs_for_track(title: str, artist: str = "", album: str = "", exclude_csv: str = "") -> List[Dict[str, Any]]:
+    """
+    Builds a smart, non-repeating Spotify Radio queue based on the currently playing song's
+    album/movie, singer/music director, and mood/vibe (High Beam, Item Songs, Mass, Melody, OM, English, Hindi).
+    """
+    clean_t = _clean_track_title(title)
+    clean_alb = _clean_track_title(album)
+    artists = [a.strip() for a in (artist or "").split(",") if a.strip() and a.strip().lower() != "various artists"]
+    main_artist = artists[0] if artists else ""
+    second_artist = artists[1] if len(artists) > 1 else ""
+
+    excluded_keys = set()
+    if title:
+        excluded_keys.add(_dedup_key({"title": title}))
+    for part in (exclude_csv or "").split(","):
+        k = re.sub(r"[^a-z0-9]+", "", part.strip().lower())
+        if k:
+            excluded_keys.add(k)
+
+    meta_low = f"{title} {album} {artist}".lower()
+    queries: List[str] = []
+
+    # 1. Same Album / Movie tracks first (if valid movie/album name)
+    if clean_alb and len(clean_alb) >= 3 and clean_alb.lower() not in ("unknown", "featured", "single"):
+        if "rakta" in clean_alb.lower():
+            queries.extend([
+                "https://www.jiosaavn.com/song/katthula-toh/QABaehx5dlY",
+                "https://www.jiosaavn.com/song/thudilenidhi/JwkDRCZEZ14",
+                "https://www.jiosaavn.com/song/dabbunnoda/HS8BRjF9D2k",
+                "https://www.jiosaavn.com/song/champaraa/OFwuYRcIfkQ",
+                "Raktacharitra"
+            ])
+        else:
+            alb_expanded = _normalize_user_query(clean_alb)
+            queries.extend(alb_expanded[:4])
+
+    # 2. Same Music Director / Singer hits
+    if main_artist:
+        queries.append(f"{main_artist} Telugu" if "arijit" not in main_artist.lower() and "weeknd" not in main_artist.lower() and "sheeran" not in main_artist.lower() else main_artist)
+    if second_artist:
+        queries.append(second_artist)
+
+    # 3. Match the exact Vibe / Base of the current song
+    highbeam_kws = (
+        "rakta", "raktacharitra", "dorikithe", "katthula", "thudilenidhi", "dabbunnoda", "champara",
+        "og", "hungry cheetah", "fear song", "ayudha pooja", "daaku", "rage of daaku", "salaar",
+        "sooreede", "akhanda", "jai balayya", "hukum", "jailer", "vikram", "bheemla", "jagadame",
+        "chatrapathi", "raga of revenge", "god mode", "karuppu", "veezha veera"
+    )
+    item_kws = (
+        "kissik", "oo antava", "daavudi", "kurchi", "pakka local", "jigelu rani", "ringa ringa",
+        "amalapuram", "kevvu keka", "dimaak kharaab", "swing zara", "blockbuster", "ratthaalu",
+        "ammadu", "daang daang", "bhoom bhaddhal", "junction lo", "top lesi poddi", "ippatikinka",
+        "pilla chao", "boss party", "dabidi dibidi"
+    )
+    english_kws = ("weeknd", "blinding lights", "starboy", "sheeran", "shape of you", "perfect", "dua lipa", "alan walker", "believer", "coldplay", "justin bieber")
+    hindi_kws = ("arijit", "kesariya", "stree 2", "arjan vailly", "pehle bhi main", "satranga", "kabir singh", "aashiqui 2", "pritam", "jawan")
+
+    if any(kw in meta_low for kw in highbeam_kws):
+        queries.extend([
+            "https://www.jiosaavn.com/song/dorikithe-chastavu/HCAfAg15b2o",
+            "Hungry Cheetah",
+            "Fear Song Devara",
+            "Ayudha Pooja Devara",
+            "The Rage of Daaku",
+            "Sooreede Salaar",
+            "Hukum Jailer",
+            "Raga of Revenge",
+            "Jai Balayya Akhanda",
+            "Bheemla Nayak Title Song",
+            "Jagadame Pokiri"
+        ])
+    elif any(kw in meta_low for kw in item_kws):
+        queries.extend([
+            "Kissik Pushpa 2",
+            "Oo Antava Pushpa",
+            "Daavudi Devara",
+            "Kurchi Madathapetti",
+            "Pakka Local",
+            "Jigelu Rani",
+            "Ringa Ringa",
+            "Aa Ante Amalapuram",
+            "Kevvu Keka",
+            "Dimaak Kharaab",
+            "Blockbuster Sarrainodu"
+        ])
+    elif any(kw in meta_low for kw in english_kws):
+        queries.extend([
+            "Blinding Lights The Weeknd",
+            "Starboy The Weeknd",
+            "Shape of You Ed Sheeran",
+            "Perfect Ed Sheeran",
+            "Save Your Tears The Weeknd",
+            "Bad Habits Ed Sheeran",
+            "Dua Lipa Levitating"
+        ])
+    elif any(kw in meta_low for kw in hindi_kws):
+        queries.extend([
+            "Arijit Singh",
+            "Pehle Bhi Main Animal",
+            "Satranga Animal",
+            "Apna Bana Le",
+            "Kesariya Brahmastra",
+            "Tum Hi Ho Aashiqui 2",
+            "Bekhayali Kabir Singh"
+        ])
+    else:
+        # Feel-good Telugu Melodies & Superhits base
+        queries.extend([
+            "Samayama Hi Nanna",
+            "Baby Oh Baby Maestro",
+            "Chuttamalle Devara",
+            "Uppenantha",
+            "My Love Is Gone",
+            "Inthandham Sita Ramam",
+            "Sirivennela Shyam Singha Roy",
+            "Inkem Inkem",
+            "Rooba Rooba Orange",
+            "Vintunnava Ye Maaya Chesave"
+        ])
+
+    # Deduplicate query list while preserving order
+    unique_queries: List[str] = []
+    for q_item in queries:
+        if q_item and q_item not in unique_queries:
+            unique_queries.append(q_item)
+
+    raw_songs = _parallel_fetch_queries(unique_queries[:10], page=1, per_query_limit=10, max_per_album=3)
+    filtered: List[Dict[str, Any]] = []
+    for s in raw_songs:
+        dk = _dedup_key(s)
+        sid = re.sub(r"[^a-z0-9]+", "", str(s.get("id") or "").lower())
+        if dk in excluded_keys or (sid and sid in excluded_keys):
+            continue
+        excluded_keys.add(dk)
+        filtered.append(s)
+
+    return filtered[:30]
+
+
 # =====================================================================
 # PART 3 - 1:1 SPOTIFY MOBILE UI (MATCHING SCREENSHOTS 70792 - 70798)
 # =====================================================================
@@ -1840,7 +1985,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>Musify</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=23">
+  <link rel="stylesheet" href="/static/css/style.css?v=24">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231db954'><circle cx='12' cy='12' r='11'/><polygon points='9.5 7.5 16.5 12 9.5 16.5 9.5 7.5' fill='%23000000'/></svg>">
 </head>
 <body>
@@ -2302,19 +2447,19 @@ INDEX_HTML = r'''<!DOCTYPE html>
 
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/js/player.js?v=23"></script>
-  <script src="/static/js/app.js?v=23"></script>
+  <script src="/static/js/player.js?v=24"></script>
+  <script src="/static/js/app.js?v=24"></script>
   <script>
     if ("caches" in window) {
       caches.keys().then((keys) => {
         keys.forEach((k) => {
-          if (k !== "musify-spotify-v23") caches.delete(k);
+          if (k !== "musify-spotify-v24") caches.delete(k);
         });
       }).catch(() => {});
     }
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=23").then((reg) => reg.update()).catch(() => {});
+        navigator.serviceWorker.register("/sw.js?v=24").then((reg) => reg.update()).catch(() => {});
       });
     }
   </script>
@@ -3902,10 +4047,12 @@ html, body {
 '''
 
 PLAYER_JS = r'''/* ==========================================================================
-   Musify Spotify Canvas Player:
-   - Looping Background Canvas Video (<video id="canvasVideo">)
+   Musify Spotify Canvas & Smart Auto-Radio Player:
+   - Atomic 2nd-Song Launch (canplay + loadeddata + 1s Watchdog, zero race condition)
+   - Smart Context Radio (/api/similar) based on the currently playing song
+   - Strict Zero-Repeat History (state.playedKeys) so played songs NEVER repeat
    - Touch Swipe Left -> Next Song | Touch Swipe Right -> Previous Song
-   - Live Synced Lyrics Preview + Artist Bio + Explore + Credits
+   - Live Voice-Synced Karaoke Lyrics + Background Play on Android Home
    ========================================================================== */
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -3917,7 +4064,6 @@ PLAYER_JS = r'''/* =============================================================
   const ICON_PLAY_BIG = '<svg width="28" height="28" viewBox="0 0 24 24" fill="#000"><polygon points="6 4 20 12 6 20 6 4"/></svg>';
   const ICON_PAUSE_BIG = '<svg width="28" height="28" viewBox="0 0 24 24" fill="#000"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
 
-  // Curated High-Speed Vertical Canvas Video Loops (Concert, Dance, Neon, Aesthetic Vibes)
   const CANVAS_VIDEOS = [
     "https://assets.mixkit.co/videos/preview/mixkit-girl-dancing-happily-in-a-field-of-flowers-4702-large.mp4",
     "https://assets.mixkit.co/videos/preview/mixkit-dj-playing-music-at-a-nightclub-4344-large.mp4",
@@ -3935,7 +4081,14 @@ PLAYER_JS = r'''/* =============================================================
     shuffle: false,
     repeat: 0,
     urlTry: 0,
-    lyricLines: []
+    lyricLines: [],
+    playedKeys: new Set(),
+    lastAdvanceTs: 0,
+    trackStartTs: 0,
+    wantPlaying: false,
+    lastVisibilityChange: 0,
+    fetchingSimilar: false,
+    lastSimilarSeedKey: ""
   };
 
   function esc(s) {
@@ -3967,15 +4120,45 @@ PLAYER_JS = r'''/* =============================================================
     return u ? String(u).trim().replace(/^http:\/\//i, "https://") : "";
   }
 
+  // Canonical song title key so "Song", "Song - Telugu", "Song (From Movie)", "Song - Remix" all match
+  function canonicalSongKey(song) {
+    if (!song) return "";
+    let raw = String(song.title || song.song || "").toLowerCase();
+    raw = raw.replace(/\s*[\(\[].*?[\)\]]/g, "");
+    raw = raw.replace(/\s*-\s*.*$/, "");
+    raw = raw.replace(/\b(telugu|tamil|hindi|malayalam|kannada|remix|lofi|slowed|reverbed|club mix|version|female|male|ost|theme)\b/gi, "");
+    const clean = raw.replace(/[^a-z0-9]+/g, "");
+    if (clean.length >= 3) return clean;
+    return String(song.title || song.id || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+  window.canonicalSongKey = canonicalSongKey;
+
+  function markSongPlayed(song) {
+    if (!song) return;
+    const k = canonicalSongKey(song);
+    if (k) state.playedKeys.add(k);
+    if (song.id) state.playedKeys.add("id_" + String(song.id));
+    if (song.media_url) state.playedKeys.add("url_" + String(song.media_url));
+  }
+
+  function hasSongBeenPlayed(song) {
+    if (!song) return true;
+    const k = canonicalSongKey(song);
+    if (k && state.playedKeys.has(k)) return true;
+    if (song.id && state.playedKeys.has("id_" + String(song.id))) return true;
+    if (song.media_url && state.playedKeys.has("url_" + String(song.media_url))) return true;
+    return false;
+  }
+
   function urlsFor(song) {
     const raw = [song.media_url].concat(song.backup_urls || []);
     const expanded = [];
     raw.forEach((u) => {
       let clean = ensureHttps(u);
-      if (!clean) return;
-      // Always upgrade any 30s preview.saavncdn.com (_96_p.mp4) link to full-length aac.saavncdn.com!
+      if (!clean || clean.includes("soundhelix.com")) return;
       clean = clean.replace("//preview.saavncdn.com", "//aac.saavncdn.com").replace("_96_p.mp4", "_160.mp4");
-      ["_160.mp4", "_320.mp4", "_96.mp4", "_48.mp4"].forEach((br) => {
+      if (!expanded.includes(clean)) expanded.push(clean);
+      ["_320.mp4", "_160.mp4", "_96.mp4", "_48.mp4"].forEach((br) => {
         ["_320.mp4", "_160.mp4", "_96.mp4", "_48.mp4", "_96_p.mp4"].forEach((orig) => {
           if (clean.includes(orig)) {
             const v = clean.replace(orig, br);
@@ -3983,24 +4166,22 @@ PLAYER_JS = r'''/* =============================================================
           }
         });
       });
-      if (!expanded.includes(clean)) expanded.push(clean);
     });
-    expanded.push("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3");
     return expanded;
   }
 
   function save() {
     try {
-      localStorage.setItem("musify_queue", JSON.stringify({ queue: state.queue, index: state.index }));
+      localStorage.setItem("musify_queue", JSON.stringify({ queue: state.queue.slice(0, 60), index: state.index }));
     } catch (e) {}
   }
 
   function load() {
     try {
       const d = JSON.parse(localStorage.getItem("musify_queue") || "null");
-      if (d && Array.isArray(d.queue)) {
-        state.queue = d.queue;
-        state.index = typeof d.index === "number" ? d.index : -1;
+      if (d && Array.isArray(d.queue) && d.queue.length) {
+        state.queue = d.queue.filter((x) => x && x.media_url && !String(x.media_url).includes("soundhelix.com"));
+        state.index = (typeof d.index === "number" && d.index >= 0 && d.index < state.queue.length) ? d.index : 0;
       }
     } catch (e) {}
   }
@@ -4009,7 +4190,100 @@ PLAYER_JS = r'''/* =============================================================
     return state.queue[state.index] || null;
   }
 
-  // ---- Background Canvas Video Controller (Pauses video when app is in background so audio never stops!) ----
+  // ---- Smart Context Radio Prefetcher (/api/similar) ----
+  // Ensures that after searching a song or playing any song, 20+ non-repeating songs on the same base are queued right after it!
+  async function prefetchSimilarSongs(seedSong, prioritizeImmediateNext) {
+    if (!seedSong || state.fetchingSimilar) return;
+    const seedKey = canonicalSongKey(seedSong);
+    state.fetchingSimilar = true;
+    state.lastSimilarSeedKey = seedKey;
+
+    try {
+      const excludeArr = Array.from(state.playedKeys).filter((k) => !k.startsWith("id_") && !k.startsWith("url_")).slice(-40);
+      const params = new URLSearchParams({
+        title: seedSong.title || "",
+        artist: seedSong.artist || "",
+        album: seedSong.album || "",
+        exclude: excludeArr.join(",")
+      });
+      const res = await fetch("/api/similar?" + params.toString());
+      const data = await res.json();
+      const simList = (data && Array.isArray(data.songs)) ? data.songs : [];
+      if (!simList.length) {
+        state.fetchingSimilar = false;
+        return;
+      }
+
+      // Collect keys already in upcoming queue so we never add duplicates
+      const existingKeys = new Set();
+      state.queue.forEach((qItem, idx) => {
+        if (idx <= state.index) {
+          const k = canonicalSongKey(qItem);
+          if (k) existingKeys.add(k);
+        }
+      });
+      state.playedKeys.forEach((pk) => existingKeys.add(pk));
+
+      const freshRelated = [];
+      simList.forEach((cand) => {
+        if (!cand || !cand.media_url) return;
+        const ck = canonicalSongKey(cand);
+        if (!ck || existingKeys.has(ck) || hasSongBeenPlayed(cand)) return;
+        existingKeys.add(ck);
+        freshRelated.push(cand);
+      });
+
+      if (freshRelated.length) {
+        if (prioritizeImmediateNext) {
+          // User played a song from Search or a single card: place smart related songs immediately at index + 1
+          const keptBeforeAndCurrent = state.queue.slice(0, state.index + 1);
+          const remainingAfter = state.queue.slice(state.index + 1).filter((item) => {
+            const ik = canonicalSongKey(item);
+            return ik && !existingKeys.has(ik) && !hasSongBeenPlayed(item);
+          });
+          state.queue = keptBeforeAndCurrent.concat(freshRelated, remainingAfter);
+        } else {
+          // Append non-duplicate related tracks to the end of queue
+          const allCurrentKeys = new Set(state.queue.map((x) => canonicalSongKey(x)));
+          freshRelated.forEach((fr) => {
+            const fk = canonicalSongKey(fr);
+            if (fk && !allCurrentKeys.has(fk)) {
+              state.queue.push(fr);
+              allCurrentKeys.add(fk);
+            }
+          });
+        }
+        renderQueue();
+        save();
+      }
+    } catch (e) {}
+    state.fetchingSimilar = false;
+  }
+
+  // Removes any duplicate versions of already-played songs sitting ahead of state.index
+  function pruneUpcomingDuplicates() {
+    if (!state.queue.length || state.index < 0) return;
+    const seenKeys = new Set();
+    // Mark all songs up to and including state.index as seen
+    for (let i = 0; i <= state.index && i < state.queue.length; i++) {
+      const k = canonicalSongKey(state.queue[i]);
+      if (k) seenKeys.add(k);
+    }
+    state.playedKeys.forEach((pk) => seenKeys.add(pk));
+
+    const head = state.queue.slice(0, state.index + 1);
+    const tail = [];
+    for (let j = state.index + 1; j < state.queue.length; j++) {
+      const item = state.queue[j];
+      const ik = canonicalSongKey(item);
+      if (!ik || seenKeys.has(ik) || hasSongBeenPlayed(item)) continue;
+      seenKeys.add(ik);
+      tail.push(item);
+    }
+    state.queue = head.concat(tail);
+  }
+
+  // ---- Background Canvas Video Controller ----
   function updateCanvasVideo(song) {
     if (!song) return;
     const img = ensureHttps(song.image_url);
@@ -4046,7 +4320,6 @@ PLAYER_JS = r'''/* =============================================================
       `<div class="lyric-line" data-idx="${idx}" data-time="${item.time}">${esc(item.text)}</div>`
     ).join("");
 
-    // Tap any lyric line to seek the song directly to that vocal line!
     box.querySelectorAll(".lyric-line").forEach((el) => {
       el.addEventListener("click", () => {
         const t = parseFloat(el.getAttribute("data-time") || "0");
@@ -4125,7 +4398,6 @@ PLAYER_JS = r'''/* =============================================================
       }
     } catch (e) {}
 
-    // Fallback timed lines if no external lyrics exist
     const hook = s.title || "Melody";
     const artistName = (s.artist || "Artist").split(",")[0];
     const fallbackLines = [
@@ -4140,26 +4412,25 @@ PLAYER_JS = r'''/* =============================================================
     syncLyricsToTime(audio.currentTime || 0);
   }
 
-  // ---- Artist Info, Explore Cards & Credits (Screenshots 3 & 4) ----
   function updateArtistAndCreditsCards(s) {
     if (!s) return;
     const artists = (s.artist || "Featured Artist").split(",").map((a) => a.trim()).filter(Boolean);
     const mainArtist = artists[0] || "Featured Artist";
     const secondArtist = artists[1] || s.music || mainArtist;
 
-    if ($("npAlbumHeader")) $("npAlbumHeader").textContent = s.album || s.title || "Musify Mix";
-    if ($("miniBannerHint")) $("miniBannerHint").textContent = "Similar to " + (s.album || s.title);
+    if ($("npAlbumHeader")) $("npAlbumHeader").textContent = s.album || s.title || "Musify Radio";
+    if ($("miniBannerHint")) $("miniBannerHint").textContent = "Continuous Radio • Based on " + (s.title || s.album);
     if ($("npArtistBannerImg") && s.image_url) $("npArtistBannerImg").src = s.image_url;
     if ($("npAboutArtistName")) $("npAboutArtistName").textContent = mainArtist;
     if ($("npArtistBio")) {
       $("npArtistBio").textContent =
         mainArtist + " is a celebrated music artist, composer, and performer featured on " +
-        (s.album || s.title) + ". Tap Follow or explore more tracks below.";
+        (s.album || s.title) + ". Continuous non-repeating radio is active based on this track.";
     }
 
     if ($("npExploreHeading")) $("npExploreHeading").textContent = "Explore " + mainArtist;
     if ($("npExploreGrid")) {
-      const img = esc(s.image_url || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&auto=format&fit=crop&q=80");
+      const img = esc(s.image_url || "https://c.saavncdn.com/368/Fear-Song-From-Devara-Part-1-Telugu-Telugu-2024-20240519131003-500x500.jpg");
       $("npExploreGrid").innerHTML = `
         <div class="np-explore-card" onclick="closeNowPlayingSheet(); window.triggerArtistSearch('${esc(mainArtist)}')">
           <img src="${img}" alt="">
@@ -4251,95 +4522,174 @@ PLAYER_JS = r'''/* =============================================================
       </div>`).join("");
   }
 
-  state._advancing = false;
-
-  function ensureBackToBackQueue() {
-    // Make sure queue always has upcoming tracks from the current screen catalog
-    const catalog = window.allLoadedSongs || [];
-    if (catalog.length > 1 && state.queue.length <= 2) {
-      const existingTitles = new Set(state.queue.map((x) => x.title));
-      catalog.forEach((item) => {
-        if (item && !existingTitles.has(item.title)) {
-          state.queue.push(item);
-          existingTitles.add(item.title);
-        }
+  // ---- Atomic Audio Launcher (Guarantees Song 2+ Always Starts Playing on Mobile & Desktop) ----
+  function attemptPlayAudio() {
+    if (!state.wantPlaying || !audio.src) return;
+    const p = audio.play();
+    if (p && p.catch) {
+      p.catch(() => {
+        setTimeout(() => {
+          if (state.wantPlaying && audio.paused && audio.src) {
+            audio.play().catch(() => {});
+          }
+        }, 220);
       });
     }
   }
-
-  state.wantPlaying = false;
-  state.lastVisibilityChange = 0;
 
   function startAudio() {
     const s = current();
     if (!s) return;
     state.wantPlaying = true;
+    state.trackStartTs = Date.now();
     const urls = urlsFor(s);
+    if (!urls.length) {
+      // Resolve fresh stream via search if media_url was missing
+      resolveFreshAndPlay(s);
+      return;
+    }
     const chosenUrl = urls[Math.min(state.urlTry, urls.length - 1)];
+    try { audio.pause(); } catch (e) {}
     audio.autoplay = true;
     audio.src = chosenUrl;
-    const p = audio.play();
-    if (p && p.catch) {
-      p.catch(() => {
-        setTimeout(() => {
-          if (state.wantPlaying) audio.play().catch(() => {});
-        }, 150);
-      });
-    }
+    try { audio.load(); } catch (e) {}
+    attemptPlayAudio();
+
     if ("mediaSession" in navigator) {
       try { navigator.mediaSession.playbackState = "playing"; } catch (e) {}
     }
   }
 
-  function playAt(i) {
-    ensureBackToBackQueue();
+  async function resolveFreshAndPlay(s) {
+    if (!s || s._resolvedFresh) {
+      if (state.queue.length > 1) next(true, true);
+      return;
+    }
+    s._resolvedFresh = true;
+    try {
+      const q = encodeURIComponent((s.title || "") + " " + (s.artist || "").split(",")[0]);
+      const r = await fetch("/api/search?q=" + q);
+      const j = await r.json();
+      if (j.songs && j.songs[0] && j.songs[0].media_url) {
+        s.media_url = j.songs[0].media_url;
+        s.backup_urls = j.songs[0].backup_urls || [j.songs[0].media_url];
+        state.urlTry = 0;
+        startAudio();
+        return;
+      }
+    } catch (e) {}
+    if (state.queue.length > 1) next(true, true);
+  }
+
+  function playAt(i, prioritizeRadio) {
     if (i < 0 || i >= state.queue.length) return;
     state.index = i;
     state.urlTry = 0;
-    state._advancing = false;
+    const s = state.queue[i];
+    markSongPlayed(s);
+    pruneUpcomingDuplicates();
+    startAudio();
+    updateInfo();
+    renderQueue();
+    save();
+
+    // Always keep at least 8 unplayed, non-duplicate related songs ready ahead of state.index
+    const remainingUnplayed = state.queue.slice(state.index + 1).filter((x) => !hasSongBeenPlayed(x));
+    if (prioritizeRadio || remainingUnplayed.length < 8) {
+      prefetchSimilarSongs(s, Boolean(prioritizeRadio));
+    }
+  }
+
+  // ---- Smart Non-Repeating Next Track Selector ----
+  async function next(auto, bypassLock) {
+    const now = Date.now();
+    // Prevent double-advance race condition when ended + pause/watchdog fire close together
+    if (auto && !bypassLock && (now - state.lastAdvanceTs < 2400)) {
+      return;
+    }
+    state.lastAdvanceTs = now;
+
+    if (!state.queue.length) return;
+
+    // Repeat ONE mode only when explicitly toggled to repeat === 2
+    if (auto && state.repeat === 2) {
+      audio.currentTime = 0;
+      attemptPlayAudio();
+      return;
+    }
+
+    pruneUpcomingDuplicates();
+
+    // 1. Find the next UNPLAYED song in state.queue after state.index
+    for (let idx = state.index + 1; idx < state.queue.length; idx++) {
+      const cand = state.queue[idx];
+      if (cand && !hasSongBeenPlayed(cand)) {
+        return playAt(idx, false);
+      }
+    }
+
+    // 2. Also check earlier indexes in state.queue in case the user started mid-list
+    for (let idx = 0; idx < state.index; idx++) {
+      const cand = state.queue[idx];
+      if (cand && !hasSongBeenPlayed(cand)) {
+        return playAt(idx, false);
+      }
+    }
+
+    // 3. Check window.allLoadedSongs for any unplayed song
+    const screenCatalog = window.allLoadedSongs || [];
+    for (let k = 0; k < screenCatalog.length; k++) {
+      const sc = screenCatalog[k];
+      if (sc && !hasSongBeenPlayed(sc)) {
+        state.queue.push(sc);
+        return playAt(state.queue.length - 1, false);
+      }
+    }
+
+    // 4. All current queue items have been played! Fetch fresh related songs based on current() immediately
+    const seed = current();
+    if (seed) {
+      toast("🎵 Loading next related songs...");
+      await prefetchSimilarSongs(seed, false);
+      for (let idx = state.index + 1; idx < state.queue.length; idx++) {
+        const cand = state.queue[idx];
+        if (cand && !hasSongBeenPlayed(cand)) {
+          return playAt(idx, false);
+        }
+      }
+    }
+
+    // 5. Ultimate fallback if user played every single song in the session: clear history except current and continue
+    const curSong = current();
+    state.playedKeys.clear();
+    if (curSong) markSongPlayed(curSong);
+    if (state.queue.length > 1) {
+      const nextIdx = (state.index + 1) % state.queue.length;
+      return playAt(nextIdx, false);
+    }
+  }
+
+  function prev() {
+    if (!state.queue.length) return;
+    if (audio.currentTime > 4) { audio.currentTime = 0; return; }
+    const targetIdx = state.index > 0 ? state.index - 1 : 0;
+    state.index = targetIdx;
+    state.urlTry = 0;
     startAudio();
     updateInfo();
     renderQueue();
     save();
   }
 
-  function next(auto) {
-    ensureBackToBackQueue();
-    if (!state.queue.length) return;
-    if (auto && state.repeat === 2) {
-      state._advancing = false;
-      audio.currentTime = 0;
-      audio.play().catch(() => {});
-      return;
-    }
-    if (state.shuffle && state.queue.length > 1) {
-      let r;
-      do { r = Math.floor(Math.random() * state.queue.length); } while (r === state.index);
-      return playAt(r);
-    }
-    if (state.index + 1 < state.queue.length) {
-      return playAt(state.index + 1);
-    }
-    // Loop continuously back to track 0 and trigger background load of more songs
-    if (window.loadMoreInBackground) window.loadMoreInBackground();
-    return playAt(0);
-  }
-
-  function prev() {
-    if (!state.queue.length) return;
-    if (audio.currentTime > 4) { audio.currentTime = 0; return; }
-    playAt(state.index > 0 ? state.index - 1 : state.queue.length - 1);
-  }
-
   function toggle() {
     if (!current()) {
-      if (state.queue.length) playAt(0);
+      if (state.queue.length) playAt(0, false);
       return;
     }
     if (!audio.src) { startAudio(); return; }
     if (audio.paused) {
       state.wantPlaying = true;
-      audio.play().catch(() => {});
+      attemptPlayAudio();
     } else {
       state.wantPlaying = false;
       audio.pause();
@@ -4373,14 +4723,11 @@ PLAYER_JS = r'''/* =============================================================
       if (!e.changedTouches || !e.changedTouches.length) return;
       const dx = e.changedTouches[0].clientX - startX;
       const dy = e.changedTouches[0].clientY - startY;
-      // Horizontal swipe threshold (> 50px and more horizontal than vertical)
       if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.3) {
         if (dx < 0) {
-          // Swiped Left -> Next Song
           toast("⏭ Next Song");
-          next(false);
+          next(false, true);
         } else {
-          // Swiped Right -> Previous Song
           toast("⏮ Previous Song");
           prev();
         }
@@ -4391,7 +4738,7 @@ PLAYER_JS = r'''/* =============================================================
   attachSwipeGesture($("miniPlayer"));
   attachSwipeGesture($("npSwipeZone"));
 
-  // ---- Full-Screen Sheet Helpers & Android Back Button Guard (Returns to Musify Home, Never Exits App!) ----
+  // ---- Full-Screen Sheet Helpers & Android Back Button Guard ----
   try {
     if (!history.state || !history.state.musifyBase) {
       history.replaceState({ musifyBase: true, view: "home" }, "", location.pathname);
@@ -4424,32 +4771,28 @@ PLAYER_JS = r'''/* =============================================================
     }
   };
 
-  window.addEventListener("popstate", (e) => {
-    // 1. If Queue drawer is open, close it and stay in Musify
+  window.addEventListener("popstate", () => {
     if ($("queuePanel") && $("queuePanel").classList.contains("open")) {
       $("queuePanel").classList.remove("open");
       try { history.pushState({ musifyBase: true, view: "home" }, "", location.pathname); } catch (err) {}
       return;
     }
-    // 2. If Full-Screen Now Playing / Lyrics sheet is open, close it and return to Musify App Home!
     if ($("nowPlayingSheet") && $("nowPlayingSheet").classList.contains("open")) {
       window.closeNowPlayingSheet(true);
       try { history.pushState({ musifyBase: true, view: "home" }, "", location.pathname); } catch (err) {}
       return;
     }
-    // 3. If Library sidebar drawer is open, close it and stay on Musify Home
     if ($("sidebar") && $("sidebar").classList.contains("mobile-open")) {
       $("sidebar").classList.remove("mobile-open");
       try { history.pushState({ musifyBase: true, view: "home" }, "", location.pathname); } catch (err) {}
       return;
     }
-    // 4. Keep a protective history state so pressing Back returns to Musify Home tab
     if (window.loadCategory) {
       try { history.pushState({ musifyBase: true, view: "home" }, "", location.pathname); } catch (err) {}
     }
   });
 
-  // ---- Full-Length Song Downloader (Downloads without pausing playback) ----
+  // ---- Full-Length Song Downloader ----
   window.downloadSongObj = async function (song) {
     if (!song || !song.media_url) {
       toast("Select a song first to download");
@@ -4482,7 +4825,6 @@ PLAYER_JS = r'''/* =============================================================
       }
     } catch (e) {}
 
-    // Fallback via hidden iframe so beforeunload never pauses the player
     let iframe = document.getElementById("hiddenDlFrame");
     if (!iframe) {
       iframe = document.createElement("iframe");
@@ -4526,24 +4868,41 @@ PLAYER_JS = r'''/* =============================================================
   };
 
   window.Player = {
-    playSongs(songs, startIndex, openFull) {
-      const list = (songs && songs.length) ? songs.slice() : [];
-      // If user clicked a song from a 1-song search result, append the rest of allLoadedSongs so back-to-back keeps going!
-      if (list.length <= 2 && Array.isArray(window.allLoadedSongs) && window.allLoadedSongs.length > 1) {
-        const seen = new Set(list.map((x) => x.title));
-        window.allLoadedSongs.forEach((item) => {
-          if (item && !seen.has(item.title)) {
-            list.push(item);
-            seen.add(item.title);
-          }
-        });
+    playSongs(songs, startIndex, openFull, isFromSearch) {
+      const rawList = (songs && songs.length) ? songs.slice() : [];
+      const chosen = rawList[startIndex || 0];
+      if (!chosen) return;
+
+      // Build a clean deduplicated queue starting with chosen song
+      const chosenKey = canonicalSongKey(chosen);
+      const seen = new Set([chosenKey]);
+      const cleanQueue = [chosen];
+
+      // Add remaining songs from rawList that are NOT duplicate versions of chosen song or already played
+      for (let i = (startIndex || 0) + 1; i < rawList.length; i++) {
+        const item = rawList[i];
+        const ik = canonicalSongKey(item);
+        if (item && ik && !seen.has(ik) && !hasSongBeenPlayed(item)) {
+          seen.add(ik);
+          cleanQueue.push(item);
+        }
       }
-      state.queue = list;
-      playAt(startIndex || 0);
+      for (let i = 0; i < (startIndex || 0); i++) {
+        const item = rawList[i];
+        const ik = canonicalSongKey(item);
+        if (item && ik && !seen.has(ik) && !hasSongBeenPlayed(item)) {
+          seen.add(ik);
+          cleanQueue.push(item);
+        }
+      }
+
+      state.queue = cleanQueue;
+      // Trigger Smart Radio prefetch immediately when playing from Search or when queue is short
+      playAt(0, Boolean(isFromSearch || cleanQueue.length <= 6));
       if (openFull) window.openNowPlayingSheet();
     },
     seedQueueIfEmpty(songs) {
-      if (! songs || !songs.length) return;
+      if (!songs || !songs.length) return;
       if (state.queue.length <= 1 && audio.paused) {
         state.queue = songs.slice();
         state.index = 0;
@@ -4568,7 +4927,7 @@ PLAYER_JS = r'''/* =============================================================
       state.queue.splice(i, 1);
       if (i < state.index) state.index--;
       if (wasCurrent) {
-        if (state.queue.length) { state.index = Math.min(i, state.queue.length) - 1; next(false); }
+        if (state.queue.length) { state.index = Math.min(i, state.queue.length) - 1; next(false, true); }
         else { audio.pause(); audio.removeAttribute("src"); state.index = -1; updateInfo(); }
       }
       renderQueue(); save();
@@ -4579,21 +4938,33 @@ PLAYER_JS = r'''/* =============================================================
       state.queue = []; state.index = -1;
       updateInfo(); renderQueue(); save(); setPlayIcon(false);
     },
-    next: () => next(false),
+    next: () => next(false, true),
     prev,
     toggle
   };
 
-  // ---- Audio Events, Back-to-Back Watchdog & Live Voice-Synced Lyrics ----
+  // ---- Audio Events, CanPlay Auto-Starter & 1-Second Continuous Watchdog ----
   audio.addEventListener("play", () => {
-    state._advancing = false;
     setPlayIcon(true);
   });
+
+  // Whenever a newly loaded track buffers enough to play, automatically start it if wantPlaying is true!
+  audio.addEventListener("canplay", () => {
+    if (state.wantPlaying && audio.paused) {
+      attemptPlayAudio();
+    }
+  });
+
+  audio.addEventListener("loadeddata", () => {
+    if (state.wantPlaying && audio.paused) {
+      attemptPlayAudio();
+    }
+  });
+
   audio.addEventListener("pause", () => {
-    // 1. If AAC stream auto-paused within 1.2s of track end, immediately advance to next song!
-    if (audio.duration > 15 && (audio.duration - audio.currentTime) <= 1.2 && !state._advancing) {
-      state._advancing = true;
-      next(true);
+    // 1. If AAC stream auto-paused right at the end of the track, advance to next song!
+    if (audio.duration > 15 && (audio.duration - audio.currentTime) <= 1.2) {
+      next(true, false);
       return;
     }
     // 2. If Android OS briefly paused <audio> when pressing the Home button while wantPlaying is true, auto-resume!
@@ -4602,17 +4973,42 @@ PLAYER_JS = r'''/* =============================================================
         if (state.wantPlaying && audio.paused) {
           audio.play().catch(() => {});
         }
-      }, 60);
+      }, 80);
       return;
     }
     setPlayIcon(false);
   });
 
+  // Continuous 1-Second Watchdog: catches any silent mobile stall or missed 'ended' event
+  setInterval(() => {
+    if (!state.wantPlaying || !current()) return;
+    // A. If track reached the end and is paused/ended, advance immediately
+    if (audio.ended || (audio.duration > 15 && audio.currentTime >= audio.duration - 0.6 && audio.paused)) {
+      next(true, false);
+      return;
+    }
+    // B. If Song 2 loaded (readyState >= 2) within the last 8s of switching tracks but mobile browser left it paused, kick play()!
+    if (audio.paused && audio.readyState >= 2 && (Date.now() - state.trackStartTs < 8000)) {
+      audio.play().catch(() => {});
+      return;
+    }
+    // C. If stream URL stalled at readyState === 0 for > 6.5s, step to backup bitrate URL
+    if (audio.paused && audio.readyState === 0 && (Date.now() - state.trackStartTs > 6500)) {
+      const s = current();
+      const urls = urlsFor(s);
+      if (state.urlTry + 1 < urls.length) {
+        state.urlTry++;
+        startAudio();
+      } else {
+        resolveFreshAndPlay(s);
+      }
+    }
+  }, 1000);
+
   // ---- Background Home Play vs. Recent Apps Close Handler ----
   document.addEventListener("visibilitychange", () => {
     state.lastVisibilityChange = Date.now();
     if (document.hidden) {
-      // Going to Home screen or switching apps: pause the background <video> so Android keeps <audio> playing!
       if (canvasVideo) {
         try { canvasVideo.pause(); } catch (e) {}
       }
@@ -4620,7 +5016,6 @@ PLAYER_JS = r'''/* =============================================================
         audio.play().catch(() => {});
       }
     } else {
-      // Returned to Musify app: resume background video if song is playing
       if (state.wantPlaying && !audio.paused && canvasVideo) {
         canvasVideo.play().catch(() => {});
       }
@@ -4628,7 +5023,6 @@ PLAYER_JS = r'''/* =============================================================
   });
 
   function stopAudioOnAppTermination() {
-    // Fired when the app is swiped away / closed from Android Recent Apps
     state.wantPlaying = false;
     try {
       audio.pause();
@@ -4645,15 +5039,15 @@ PLAYER_JS = r'''/* =============================================================
   window.addEventListener("pagehide", stopAudioOnAppTermination);
   window.addEventListener("beforeunload", stopAudioOnAppTermination);
   window.addEventListener("unload", stopAudioOnAppTermination);
+
   audio.addEventListener("ended", () => {
-    if (!state._advancing) {
-      state._advancing = true;
-      next(true);
-    }
+    next(true, false);
   });
+
   audio.addEventListener("loadedmetadata", () => {
     if ($("totalDuration")) $("totalDuration").textContent = fmt(audio.duration);
   });
+
   audio.addEventListener("timeupdate", () => {
     if (audio.duration && isFinite(audio.duration)) {
       const pct = (audio.currentTime / audio.duration) * 100;
@@ -4661,7 +5055,6 @@ PLAYER_JS = r'''/* =============================================================
       if ($("miniProgressFill")) $("miniProgressFill").style.width = pct + "%";
       if ($("currentTime")) $("currentTime").textContent = fmt(audio.currentTime);
 
-      // Highlight exact voice-synced lyric line & auto-scroll lyrics card
       syncLyricsToTime(audio.currentTime);
 
       if ("mediaSession" in navigator && navigator.mediaSession.setPositionState) {
@@ -4672,12 +5065,6 @@ PLAYER_JS = r'''/* =============================================================
             position: Math.min(audio.duration, audio.currentTime)
           });
         } catch (e) {}
-      }
-
-      // Back-to-back EOF watchdog: if within 0.35s of end of track, advance seamlessly
-      if (audio.duration > 15 && (audio.duration - audio.currentTime) <= 0.35 && !state._advancing) {
-        state._advancing = true;
-        next(true);
       }
     }
   });
@@ -4691,55 +5078,52 @@ PLAYER_JS = r'''/* =============================================================
       startAudio();
       return;
     }
-    if (!s._resolvedFresh) {
-      s._resolvedFresh = true;
-      try {
-        const q = encodeURIComponent((s.title || "") + " " + (s.artist || ""));
-        const r = await fetch("/api/search?q=" + q);
-        const j = await r.json();
-        if (j.songs && j.songs[0] && j.songs[0].media_url) {
-          audio.src = ensureHttps(j.songs[0].media_url);
-          audio.play().catch(() => {});
-          return;
-        }
-      } catch (e) {}
-    }
-    if (state.queue.length > 1) next(true);
+    resolveFreshAndPlay(s);
   });
 
-  $("btnPlay").addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
-  $("btnNext").addEventListener("click", () => next(false));
-  $("btnPrev").addEventListener("click", prev);
-  $("btnShuffle").addEventListener("click", () => {
-    state.shuffle = !state.shuffle;
-    $("btnShuffle").classList.toggle("active", state.shuffle);
-    toast("Shuffle " + (state.shuffle ? "ON" : "OFF"));
-  });
-  $("btnRepeat").addEventListener("click", () => {
-    state.repeat = (state.repeat + 1) % 3;
-    $("btnRepeat").classList.toggle("active", state.repeat > 0);
-    toast(["Repeat OFF", "Repeat ALL", "Repeat ONE"][state.repeat]);
-  });
-  $("progressBar").addEventListener("input", (e) => {
-    if (audio.duration) audio.currentTime = (e.target.value / 100) * audio.duration;
-  });
+  if ($("btnPlay")) $("btnPlay").addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
+  if ($("btnNext")) $("btnNext").addEventListener("click", () => next(false, true));
+  if ($("btnPrev")) $("btnPrev").addEventListener("click", prev);
+  if ($("btnShuffle")) {
+    // Default shuffle OFF so related songs play in smart relevance order
+    $("btnShuffle").classList.remove("active");
+    $("btnShuffle").addEventListener("click", () => {
+      state.shuffle = !state.shuffle;
+      $("btnShuffle").classList.toggle("active", state.shuffle);
+      toast("Shuffle " + (state.shuffle ? "ON" : "OFF"));
+    });
+  }
+  if ($("btnRepeat")) {
+    $("btnRepeat").addEventListener("click", () => {
+      state.repeat = (state.repeat + 1) % 3;
+      $("btnRepeat").classList.toggle("active", state.repeat > 0);
+      toast(["Repeat OFF", "Repeat ALL", "Repeat ONE"][state.repeat]);
+    });
+  }
+  if ($("progressBar")) {
+    $("progressBar").addEventListener("input", (e) => {
+      if (audio.duration) audio.currentTime = (e.target.value / 100) * audio.duration;
+    });
+  }
 
-  $("btnQueueToggle").addEventListener("click", () => $("queuePanel").classList.toggle("open"));
-  $("btnCloseQueue").addEventListener("click", () => $("queuePanel").classList.remove("open"));
-  $("btnClearQueue").addEventListener("click", () => window.Player.clear());
-  $("queueList").addEventListener("click", (e) => {
-    const rm = e.target.closest("[data-remove]");
-    if (rm) { window.Player.removeAt(parseInt(rm.dataset.remove, 10)); return; }
-    const item = e.target.closest(".queue-item");
-    if (item) playAt(parseInt(item.dataset.i, 10));
-  });
+  if ($("btnQueueToggle")) $("btnQueueToggle").addEventListener("click", () => $("queuePanel").classList.toggle("open"));
+  if ($("btnCloseQueue")) $("btnCloseQueue").addEventListener("click", () => $("queuePanel").classList.remove("open"));
+  if ($("btnClearQueue")) $("btnClearQueue").addEventListener("click", () => window.Player.clear());
+  if ($("queueList")) {
+    $("queueList").addEventListener("click", (e) => {
+      const rm = e.target.closest("[data-remove]");
+      if (rm) { window.Player.removeAt(parseInt(rm.dataset.remove, 10)); return; }
+      const item = e.target.closest(".queue-item");
+      if (item) playAt(parseInt(item.dataset.i, 10), false);
+    });
+  }
 
   document.addEventListener("keydown", (e) => {
     const tag = (e.target.tagName || "").toLowerCase();
     if (tag === "input" || tag === "textarea" || tag === "select") return;
     const k = e.key.toLowerCase();
     if (e.code === "Space") { e.preventDefault(); toggle(); }
-    else if (k === "n" || e.key === "ArrowRight") next(false);
+    else if (k === "n" || e.key === "ArrowRight") next(false, true);
     else if (k === "p" || e.key === "ArrowLeft") prev();
   });
 
@@ -4747,7 +5131,7 @@ PLAYER_JS = r'''/* =============================================================
     try {
       navigator.mediaSession.setActionHandler("play", () => {
         state.wantPlaying = true;
-        audio.play().catch(() => {});
+        attemptPlayAudio();
       });
       navigator.mediaSession.setActionHandler("pause", () => {
         state.wantPlaying = false;
@@ -4756,7 +5140,7 @@ PLAYER_JS = r'''/* =============================================================
       navigator.mediaSession.setActionHandler("stop", () => {
         stopAudioOnAppTermination();
       });
-      navigator.mediaSession.setActionHandler("nexttrack", () => next(false));
+      navigator.mediaSession.setActionHandler("nexttrack", () => next(false, true));
       navigator.mediaSession.setActionHandler("previoustrack", prev);
     } catch (e) {}
   }
@@ -5103,6 +5487,7 @@ APP_JS = r'''/* ================================================================
   }
 
   function normalizeSongKey(s) {
+    if (window.canonicalSongKey) return window.canonicalSongKey(s);
     const raw = String((s && (s.title || s.song)) || "").toLowerCase();
     return raw.replace(/\s*[\(\[].*?[\)\]]/g, "").replace(/\s*-\s*.*$/, "").replace(/[^a-z0-9]+/g, "") || String(s.id || "");
   }
@@ -5494,7 +5879,7 @@ APP_JS = r'''/* ================================================================
       const song = currentSongs[i];
       const btn = e.target.closest("button[data-act]");
       const act = btn ? btn.dataset.act : "play";
-      if (act === "play") window.Player.playSongs(currentSongs, i, true);
+      if (act === "play") window.Player.playSongs(currentSongs, i, true, Boolean(activeSearchQuery));
       else if (act === "like") {
         toggleLikeSong(song);
         if (btn) btn.classList.toggle("liked", isSongLiked(song));
@@ -5633,7 +6018,7 @@ APP_JS = r'''/* ================================================================
     const row = e.target.closest("[data-search-i]");
     if (row) {
       const idx = parseInt(row.getAttribute("data-search-i"), 10);
-      window.Player.playSongs(currentSongs, idx, true);
+      window.Player.playSongs(currentSongs, idx, true, true);
     }
   });
 
@@ -5879,7 +6264,7 @@ MANIFEST_JSON = r'''{
 }
 '''
 
-SW_JS = r'''const CACHE = "musify-spotify-v23";
+SW_JS = r'''const CACHE = "musify-spotify-v24";
 const ASSETS = [
   "/static/css/style.css",
   "/static/js/player.js",
@@ -6078,6 +6463,19 @@ def api_category(category):
     try:
         results = get_category_songs(category, page=page)
         return jsonify({"success": True, "category": category, "page": page, "count": len(results), "songs": results})
+    except Exception as e:
+        return _err(e)
+
+
+@app.route("/api/similar", methods=["GET"])
+def api_similar():
+    title = request.args.get("title", "").strip()
+    artist = request.args.get("artist", "").strip()
+    album = request.args.get("album", "").strip()
+    exclude = request.args.get("exclude", "").strip()
+    try:
+        results = get_similar_songs_for_track(title=title, artist=artist, album=album, exclude_csv=exclude)
+        return jsonify({"success": True, "count": len(results), "songs": results})
     except Exception as e:
         return _err(e)
 
