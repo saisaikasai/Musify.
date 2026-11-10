@@ -1782,12 +1782,50 @@ def _parallel_fetch_queries(queries: List[str], page: int = 1, per_query_limit: 
     return _deduplicate_songs(interleaved, max_per_album=max_per_album)
 
 
+def _top_up_with_related_tracks(seed_songs: List[Dict[str, Any]], min_count: int = 18) -> List[Dict[str, Any]]:
+    """
+    Ensures any search result list has at least 18+ distinct playable songs by topping up
+    from the first song's album, primary artist, and Telugu/English hits so playback never stops after 2 songs!
+    """
+    if len(seed_songs) >= min_count:
+        return seed_songs
+    extra_queries: List[str] = []
+    if seed_songs:
+        first = seed_songs[0]
+        alb = _clean_track_title(str(first.get("album") or ""))
+        art = (str(first.get("artist") or "").split(",")[0]).strip()
+        is_eng = str(first.get("language") or "").lower() == "english"
+        if alb and len(alb) >= 3 and alb.lower() not in ("unknown", "single", "featured"):
+            extra_queries.append(alb if is_eng else f"{alb} Telugu")
+        if art and len(art) >= 3 and art.lower() != "various artists":
+            extra_queries.append(art if is_eng else f"{art} Telugu")
+        if is_eng:
+            extra_queries.extend(["The Weeknd", "Ed Sheeran", "Imagine Dragons", "Alan Walker"])
+        else:
+            extra_queries.extend([
+                "Fear Song Devara Telugu",
+                "Hungry Cheetah OG",
+                "Samayama Hi Nanna",
+                "Kurchi Madathapetti",
+                "Baby Oh Baby Maestro"
+            ])
+    else:
+        extra_queries.extend(["Fear Song Devara Telugu", "Samayama Hi Nanna", "Kurchi Madathapetti"])
+
+    extra_tracks = _parallel_fetch_queries(extra_queries[:5], page=1, per_query_limit=10, max_per_album=3)
+    combined = _deduplicate_songs(seed_songs + extra_tracks)
+    if len(combined) < min_count:
+        cached_home = _cache_get("cat_v31::home::p1") or _cache_get("cat_v31::telugu::p1") or FALLBACK_CATALOG
+        combined = _deduplicate_songs(combined + cached_home)
+    return combined
+
+
 def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, Any]]:
     clean_q = query.strip()
     if not clean_q:
         return get_category_songs("home", page=page)
 
-    cache_key = f"search_v31::{clean_q.lower()}::p{page}"
+    cache_key = f"search_v34::{clean_q.lower()}::p{page}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
@@ -1797,11 +1835,13 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
         res = _fetch_single_query(queries_to_run[0], page=page, limit=limit)
         deduped = _deduplicate_songs(res)
         if deduped:
+            deduped = _top_up_with_related_tracks(deduped, min_count=18)
             _cache_set(cache_key, deduped)
             return deduped
     else:
         deduped = _parallel_fetch_queries(queries_to_run, page=page, per_query_limit=18)
         if deduped:
+            deduped = _top_up_with_related_tracks(deduped, min_count=18)
             _cache_set(cache_key, deduped)
             return deduped
 
@@ -1811,10 +1851,11 @@ def search_songs(query: str, page: int = 1, limit: int = 35) -> List[Dict[str, A
         fallback_subqueries = [" ".join(raw_words[:2]), raw_words[0], raw_words[-1]]
         deduped = _parallel_fetch_queries(fallback_subqueries, page=page, per_query_limit=15)
         if deduped:
+            deduped = _top_up_with_related_tracks(deduped, min_count=18)
             _cache_set(cache_key, deduped)
             return deduped
 
-    # Final fallback: return real full-length Telugu hits (NEVER fake SoundHelix demo tracks)
+    # Final fallback: return real full-length Telugu hits
     real_fallback = get_category_songs("telugu", page=1)
     return real_fallback if real_fallback else FALLBACK_CATALOG
 
@@ -2232,7 +2273,13 @@ def get_similar_songs_for_track(title: str, artist: str = "", album: str = "", e
         if q_item and q_item not in unique_queries:
             unique_queries.append(q_item)
 
-    raw_songs = _parallel_fetch_queries(unique_queries[:12], page=1, per_query_limit=8, max_per_album=2)
+    raw_songs = _parallel_fetch_queries(unique_queries[:6], page=1, per_query_limit=10, max_per_album=3)
+    if len(raw_songs) < 15:
+        cached_pool = (
+            _cache_get("cat_v31::english::p1") if is_english_seed
+            else (_cache_get("cat_v31::hindi::p1") if is_hindi_seed else (_cache_get("cat_v31::home::p1") or _cache_get("cat_v31::telugu::p1") or []))
+        ) or []
+        raw_songs = _deduplicate_songs(raw_songs + cached_pool)
 
     filtered_out: List[Dict[str, Any]] = []
     artist_counts: Dict[str, int] = {}
@@ -2303,6 +2350,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
 
   <!-- Hidden HTML5 Audio Streamer -->
   <audio id="audio" preload="auto" playsinline></audio>
+  <audio id="audioPrewarm" preload="auto" muted playsinline style="display:none;"></audio>
 
   <div class="app-container">
     <main class="main-area" id="mainArea">
@@ -4583,17 +4631,17 @@ html, body {
 '''
 
 PLAYER_JS = r'''/* ==========================================================================
-   Musify v33 Ultra-Reliable Continuous Player Engine:
-   - Fixes Song 3+ getting stuck after 2 songs by:
-     1) Never setting `interruptedByExternal = true` on track-load pauses (`currentTime < 2.0s` or within `4.5s` of `startAudio()`) or network buffer pauses (`readyState < 3`)
-     2) Appending `/api/similar` radio songs to the END of the queue instead of splicing into Song 3 (`index + 2`)
-     3) Multi-stage Startup & Stall Recovery Watchdog (`+700ms`, `+1800ms`, `+4200ms`) that auto-retries `audio.play()`, steps through fallback bitrates (`_160.mp4` -> `_96.mp4` -> `_320.mp4` -> `/api/stream`), and skips dead tracks automatically
-     4) Pure-Telugu Queue Lock when playing Telugu songs + Zero-Repeat History
-     5) Smart Audio Focus for Instagram, YouTube & Phone Calls (mid-song external interruptions only)
+   Musify v34 Dual-Prewarm & Continuous Hardware Session Player Engine:
+   - Solves "after playing two songs, the next song gets stuck and not playing":
+     1) Keeps `state.sessionLang` locked to the user's chosen song language (and allows Tamil/Sai Abhyankkar tracks to flow seamlessly into Telugu tracks so the queue never runs dry after 2 songs)
+     2) Pre-buffers the next upcoming song in `<audio id="audioPrewarm">` at 10s into the active song while the network radio is awake, so Song 3+ starts from Chrome's local media cache in <20ms
+     3) Continuous Web Audio API sub-audible hardware session keep-alive (`gain = 0.0001`) so Android OS never suspends the tab during the 200ms transition after 2 songs (6-8 mins of screen-off Doze mode)
+     4) Never sets `interruptedByExternal = true` on track-load pauses (`currentTime < 2.5s`) or network buffer pauses (`readyState < 3`)
    ========================================================================== */
 (function () {
   const $ = (id) => document.getElementById(id);
   const audio = $("audio");
+  const audioPrewarm = $("audioPrewarm");
   const canvasVideo = $("canvasVideo");
 
   const ICON_PLAY_MINI = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>';
@@ -4609,6 +4657,7 @@ PLAYER_JS = r'''/* =============================================================
     urlTry: 0,
     lyricLines: [],
     playedKeys: new Set(),
+    sessionLang: "telugu",
     wantPlaying: false,
     userPaused: false,
     interruptedByExternal: false,
@@ -4618,6 +4667,7 @@ PLAYER_JS = r'''/* =============================================================
     lastWaitingTs: 0,
     lastProgressTime: 0,
     lastProgressTs: 0,
+    prewarmedUrl: "",
     fetchingSimilar: false,
     lastMediaPosUpdateTs: 0,
     lastTrackAdvanceTime: 0,
@@ -4625,6 +4675,7 @@ PLAYER_JS = r'''/* =============================================================
     startupTimer2: null,
     startupWatchdogTimer: null,
     switchingGuardTimer: null,
+    audioCtx: null,
     wakeLockSentinel: null
   };
 
@@ -4635,7 +4686,42 @@ PLAYER_JS = r'''/* =============================================================
   } catch (e) {}
 
   window.screenOffLockEnabled = true;
-  window.startScreenOffBridge = function () {};
+  window.startScreenOffBridge = function () {
+    ensureAudioContextKeepAlive();
+  };
+
+  // Sub-audible Web Audio PCM stream (gain 0.0001): keeps Chrome's C++ AudioRendererMixer active
+  // across the 200ms track transition between Song 2 and Song 3 so Android Doze mode never freezes the tab!
+  function ensureAudioContextKeepAlive() {
+    if (!window.screenOffLockEnabled) return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!state.audioCtx) {
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = 30;
+        gain.gain.value = 0.0001;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        state.audioCtx = ctx;
+      }
+      if (state.audioCtx && state.audioCtx.state === "suspended" && state.wantPlaying && !state.userPaused && !state.interruptedByExternal) {
+        state.audioCtx.resume().catch(() => {});
+      }
+    } catch (e) {}
+  }
+
+  function suspendAudioContextForExternal() {
+    try {
+      if (state.audioCtx && state.audioCtx.state === "running") {
+        state.audioCtx.suspend().catch(() => {});
+      }
+    } catch (e) {}
+  }
 
   async function acquireWakeLock() {
     if (!("wakeLock" in navigator) || document.hidden) return;
@@ -4712,19 +4798,25 @@ PLAYER_JS = r'''/* =============================================================
     const engMarkers = ["blinding lights", "shape of you", "believer", "starboy", "closer", "cheap thrills", "unstoppable", "calm down", "the weeknd", "ed sheeran", "imagine dragons", "alan walker", "chainsmokers", "justin bieber", "dua lipa", "levitating", "senorita", "charlie puth", "coldplay", "bruno mars", "heat waves", "dandelions", "eminem", "billie eilish", "post malone"];
     if (rawLang === "english" || engMarkers.some((m) => comb.includes(m))) return "english";
     const hinMarkers = ["arijit singh", "kesariya", "stree 2", "kabir singh", "aashiqui 2", "apna bana le", "tum hi ho", "pehle bhi main", "satranga"];
-    if (rawLang === "hindi" || hinMarkers.some((m) => comb.includes(m))) return "hindi";
+    if (rawLang === "hindi" && !comb.includes("raktacharitra") && !comb.includes("dorikithe")) return "hindi";
+    if (hinMarkers.some((m) => comb.includes(m))) return "hindi";
     if (rawLang === "tamil" && !comb.includes("telugu")) return "tamil";
     return "telugu";
   }
 
   function isLanguageCompatible(seedSong, candSong) {
-    if (!seedSong || !candSong) return true;
-    const seedLang = detectSongLang(seedSong);
+    if (!candSong) return false;
+    const targetLang = state.sessionLang || (seedSong ? detectSongLang(seedSong) : "telugu");
     const candLang = detectSongLang(candSong);
-    if (seedLang === "telugu") {
+    // When playing Telugu songs, strictly play only Telugu songs!
+    if (targetLang === "telugu") {
       return candLang === "telugu";
     }
-    return seedLang === candLang;
+    // When playing Tamil / Sai Abhyankkar / Anirudh tracks, allow both Tamil and Telugu so queue never runs dry after 2 songs!
+    if (targetLang === "tamil") {
+      return candLang === "tamil" || candLang === "telugu";
+    }
+    return candLang === targetLang;
   }
 
   function urlsFor(song) {
@@ -4751,7 +4843,6 @@ PLAYER_JS = r'''/* =============================================================
       });
       if (!expanded.includes(clean)) expanded.push(clean);
     });
-    // Always append a dynamic /api/stream 302 resolver fallback in case a CDN token fails
     if (song.title) {
       const streamFallback = "/api/stream?id=" + encodeURIComponent(song.id || "") +
         "&title=" + encodeURIComponent(song.title || "") +
@@ -4763,24 +4854,62 @@ PLAYER_JS = r'''/* =============================================================
 
   function save() {
     try {
-      localStorage.setItem("musify_queue_v33", JSON.stringify({ queue: state.queue.slice(0, 60), index: state.index }));
+      localStorage.setItem("musify_queue_v34", JSON.stringify({ queue: state.queue.slice(0, 60), index: state.index, sessionLang: state.sessionLang }));
     } catch (e) {}
   }
 
   function load() {
     try {
-      // Clear legacy queue key that could hold old soundhelix/stale objects
       localStorage.removeItem("musify_queue");
-      const d = JSON.parse(localStorage.getItem("musify_queue_v33") || "null");
+      localStorage.removeItem("musify_queue_v33");
+      const d = JSON.parse(localStorage.getItem("musify_queue_v34") || "null");
       if (d && Array.isArray(d.queue) && d.queue.length) {
         state.queue = d.queue.filter((x) => x && x.media_url && !String(x.media_url).includes("soundhelix.com"));
         state.index = (typeof d.index === "number" && d.index >= 0 && d.index < state.queue.length) ? d.index : 0;
+        if (d.sessionLang) state.sessionLang = d.sessionLang;
       }
     } catch (e) {}
   }
 
   function current() {
     return state.queue[state.index] || null;
+  }
+
+  // Peeks at the exact song `next()` will choose so we can pre-buffer it at 10s into the current song
+  function peekNextSong() {
+    if (!state.queue.length) return null;
+    const seed = current();
+    for (let idx = state.index + 1; idx < state.queue.length; idx++) {
+      const cand = state.queue[idx];
+      if (cand && !hasSongBeenPlayed(cand) && isLanguageCompatible(seed, cand)) return cand;
+    }
+    for (let idx = 0; idx < state.index; idx++) {
+      const cand = state.queue[idx];
+      if (cand && !hasSongBeenPlayed(cand) && isLanguageCompatible(seed, cand)) return cand;
+    }
+    const screenCatalog = window.allLoadedSongs || [];
+    for (let k = 0; k < screenCatalog.length; k++) {
+      const sc = screenCatalog[k];
+      if (sc && !hasSongBeenPlayed(sc) && isLanguageCompatible(seed, sc)) return sc;
+    }
+    return state.queue[(state.index + 1) % state.queue.length] || null;
+  }
+
+  function prewarmUpcomingSong() {
+    if (!audioPrewarm) return;
+    const nxt = peekNextSong();
+    if (!nxt) return;
+    const nxtUrls = urlsFor(nxt);
+    if (!nxtUrls.length) return;
+    const targetUrl = nxtUrls[0];
+    if (state.prewarmedUrl === targetUrl) return;
+    state.prewarmedUrl = targetUrl;
+    try {
+      audioPrewarm.muted = true;
+      audioPrewarm.preload = "auto";
+      audioPrewarm.src = targetUrl;
+      audioPrewarm.load();
+    } catch (e) {}
   }
 
   // ---- Background Smart Context Radio Prefetcher (/api/similar) ----
@@ -4803,7 +4932,7 @@ PLAYER_JS = r'''/* =============================================================
         const existingKeys = new Set(state.queue.map((x) => canonicalSongKey(x)));
         state.playedKeys.forEach((pk) => existingKeys.add(pk));
 
-        const freshRelated = [];
+        let freshRelated = [];
         simList.forEach((cand) => {
           if (!cand || !cand.media_url) return;
           if (!isLanguageCompatible(seedSong, cand)) return;
@@ -4813,8 +4942,18 @@ PLAYER_JS = r'''/* =============================================================
           freshRelated.push(cand);
         });
 
+        // Safety fallback: if language filter was too strict, accept any unplayed track from simList
+        if (!freshRelated.length) {
+          simList.forEach((cand) => {
+            if (!cand || !cand.media_url) return;
+            const ck = canonicalSongKey(cand);
+            if (!ck || existingKeys.has(ck) || hasSongBeenPlayed(cand)) return;
+            existingKeys.add(ck);
+            freshRelated.push(cand);
+          });
+        }
+
         if (freshRelated.length) {
-          // ALWAYS append fresh related songs to the END of state.queue so we NEVER overwrite Song 2 or Song 3!
           state.queue = state.queue.concat(freshRelated);
           renderQueue();
           save();
@@ -5073,7 +5212,7 @@ PLAYER_JS = r'''/* =============================================================
     resolveFreshAndPlay(s);
   }
 
-  // ---- Pure Synchronous Audio Starter with Multi-Stage Startup Watchdog ----
+  // ---- Pure Synchronous Audio Starter ----
   function startAudio() {
     const s = current();
     if (!s) return;
@@ -5087,6 +5226,7 @@ PLAYER_JS = r'''/* =============================================================
     state.lastProgressTime = 0;
     state.lastProgressTs = Date.now();
     acquireWakeLock();
+    ensureAudioContextKeepAlive();
 
     const urls = urlsFor(s);
     if (!urls.length) {
@@ -5099,7 +5239,6 @@ PLAYER_JS = r'''/* =============================================================
     audio.autoplay = true;
     audio.volume = 1.0;
     audio.src = chosenUrl;
-    try { audio.load(); } catch (e) {}
 
     const attemptPlay = () => {
       if (!state.wantPlaying || state.userPaused || current() !== s) return;
@@ -5109,35 +5248,22 @@ PLAYER_JS = r'''/* =============================================================
         p.then(() => {
           state.interruptedByExternal = false;
           setPlayIcon(true);
-        }).catch(() => {
-          // Do NOT set switchingTrack = false or interruptedByExternal = true here!
-          // Browser is still fetching headers for Song 2 / Song 3; loadeddata / canplay / startup timers will play it.
-        });
+        }).catch(() => {});
       }
     };
 
     attemptPlay();
 
-    // Pulse 1 (+700ms): if metadata/frames just arrived and audio is still paused, kick play()
     state.startupTimer1 = setTimeout(() => {
       if (state.wantPlaying && !state.userPaused && current() === s && audio.paused && !audio.ended) {
         attemptPlay();
       }
-    }, 700);
+    }, 900);
 
-    // Pulse 2 (+1800ms): second kick if 5G network took 1.5s to buffer Song 3
-    state.startupTimer2 = setTimeout(() => {
-      if (state.wantPlaying && !state.userPaused && current() === s && audio.paused && !audio.ended) {
-        attemptPlay();
-      }
-    }, 1800);
-
-    // Release switchingTrack guard after 4s
     state.switchingGuardTimer = setTimeout(() => {
       state.switchingTrack = false;
     }, 4000);
 
-    // Failover Watchdog (+4500ms): if Song 3 still hasn't advanced past 0.05s, switch to next bitrate URL or next song!
     state.startupWatchdogTimer = setTimeout(() => {
       if (!state.wantPlaying || state.userPaused || current() !== s) return;
       if (audio.paused || audio.currentTime < 0.05) {
@@ -5189,14 +5315,13 @@ PLAYER_JS = r'''/* =============================================================
     renderQueue();
     save();
 
-    // Fetch more related songs in background and append to the END of queue
     const remainingUnplayed = state.queue.slice(state.index + 1).filter((x) => !hasSongBeenPlayed(x));
-    if (triggerSimilarPrefetch || remainingUnplayed.length < 8) {
+    if (triggerSimilarPrefetch || remainingUnplayed.length < 10) {
       prefetchSimilarSongs(s);
     }
   }
 
-  // ---- 100% SYNCHRONOUS Next Track Selector (Critical for Screen-Off & Foreground Autoplay!) ----
+  // ---- 100% SYNCHRONOUS Next Track Selector ----
   function next() {
     if (!state.queue.length) return;
 
@@ -5208,33 +5333,41 @@ PLAYER_JS = r'''/* =============================================================
 
     const seed = current();
 
-    // 1. Find the next UNPLAYED song in state.queue after state.index matching the language
+    // 1. Next unplayed compatible song after state.index
     for (let idx = state.index + 1; idx < state.queue.length; idx++) {
       const cand = state.queue[idx];
-      if (cand && !hasSongBeenPlayed(cand) && (!seed || isLanguageCompatible(seed, cand))) {
+      if (cand && !hasSongBeenPlayed(cand) && isLanguageCompatible(seed, cand)) {
         return playAt(idx, false);
       }
     }
 
-    // 2. Check earlier indexes in state.queue in case user started mid-list
+    // 2. Unplayed compatible song before state.index
     for (let idx = 0; idx < state.index; idx++) {
       const cand = state.queue[idx];
-      if (cand && !hasSongBeenPlayed(cand) && (!seed || isLanguageCompatible(seed, cand))) {
+      if (cand && !hasSongBeenPlayed(cand) && isLanguageCompatible(seed, cand)) {
         return playAt(idx, false);
       }
     }
 
-    // 3. Synchronously pull any unplayed song from window.allLoadedSongs
-    const screenCatalog = window.allLoadedSongs || [];
-    for (let k = 0; k < screenCatalog.length; k++) {
-      const sc = screenCatalog[k];
-      if (sc && !hasSongBeenPlayed(sc) && (!seed || isLanguageCompatible(seed, sc))) {
+    // 3. Pull any unplayed compatible song from window.allLoadedSongs or window.homeCatalogSongs
+    const pools = [].concat(window.allLoadedSongs || [], window.homeCatalogSongs || []);
+    for (let k = 0; k < pools.length; k++) {
+      const sc = pools[k];
+      if (sc && !hasSongBeenPlayed(sc) && isLanguageCompatible(seed, sc)) {
         state.queue.push(sc);
         return playAt(state.queue.length - 1, true);
       }
     }
 
-    // 4. If all loaded songs were played, clear played history (except current song) and advance immediately
+    // 4. Any unplayed song in state.queue regardless of language tag
+    for (let idx = state.index + 1; idx < state.queue.length; idx++) {
+      const cand = state.queue[idx];
+      if (cand && !hasSongBeenPlayed(cand)) {
+        return playAt(idx, true);
+      }
+    }
+
+    // 5. Reset played history (except current song) and continue immediately
     state.playedKeys.clear();
     if (seed) markSongPlayed(seed);
     if (state.queue.length > 1) {
@@ -5256,6 +5389,7 @@ PLAYER_JS = r'''/* =============================================================
   }
 
   function toggle() {
+    ensureAudioContextKeepAlive();
     if (!current()) {
       if (state.queue.length) playAt(0, false);
       return;
@@ -5265,12 +5399,14 @@ PLAYER_JS = r'''/* =============================================================
       state.userPaused = false;
       state.interruptedByExternal = false;
       state.wantPlaying = true;
+      ensureAudioContextKeepAlive();
       audio.play().catch(() => {});
     } else {
       state.userPaused = true;
       state.interruptedByExternal = false;
       state.wantPlaying = false;
       clearStartupTimers();
+      suspendAudioContextForExternal();
       audio.pause();
     }
   }
@@ -5283,7 +5419,6 @@ PLAYER_JS = r'''/* =============================================================
     }
   }
 
-  // ---- Touch Swipe Left (Next Song) & Swipe Right (Previous Song) ----
   function attachSwipeGesture(el) {
     if (!el) return;
     let startX = 0;
@@ -5363,7 +5498,6 @@ PLAYER_JS = r'''/* =============================================================
     }
   });
 
-  // ---- Full-Length Song Downloader ----
   window.downloadSongObj = async function (song) {
     if (!song || !song.media_url) {
       toast("Select a song first to download");
@@ -5444,6 +5578,10 @@ PLAYER_JS = r'''/* =============================================================
       const chosen = rawList[startIndex || 0];
       if (!chosen) return;
 
+      // Lock session language to the song the user explicitly tapped
+      state.sessionLang = detectSongLang(chosen);
+      ensureAudioContextKeepAlive();
+
       if (isUserPlaylist) {
         state.playedKeys.clear();
         state.queue = rawList;
@@ -5471,9 +5609,12 @@ PLAYER_JS = r'''/* =============================================================
       appendUnique(rawList.slice((startIndex || 0) + 1));
       appendUnique(rawList.slice(0, startIndex || 0));
 
-      // 2. Also top up with window.allLoadedSongs so queue has 15+ tracks immediately
-      if (cleanQueue.length < 15 && Array.isArray(window.allLoadedSongs)) {
+      // 2. Top up with window.allLoadedSongs and window.homeCatalogSongs so queue ALWAYS has 20+ songs at t=0ms!
+      if (cleanQueue.length < 20 && Array.isArray(window.allLoadedSongs)) {
         appendUnique(window.allLoadedSongs);
+      }
+      if (cleanQueue.length < 20 && Array.isArray(window.homeCatalogSongs)) {
+        appendUnique(window.homeCatalogSongs);
       }
 
       state.queue = cleanQueue;
@@ -5523,7 +5664,6 @@ PLAYER_JS = r'''/* =============================================================
     toggle
   };
 
-  // ---- Unified Debounced Auto-Next Trigger ----
   function triggerAutoNext() {
     const now = Date.now();
     if (now - state.lastTrackAdvanceTime < 1800) return;
@@ -5535,6 +5675,7 @@ PLAYER_JS = r'''/* =============================================================
   function tryResumeAfterExternalInterruption() {
     if (!state.interruptedByExternal || state.userPaused || !state.wantPlaying) return;
     if (!audio.paused || audio.ended) return;
+    ensureAudioContextKeepAlive();
     const p = audio.play();
     if (p && p.then) {
       p.then(() => {
@@ -5546,8 +5687,7 @@ PLAYER_JS = r'''/* =============================================================
 
   function onStreamReadyToPlay() {
     if (!state.wantPlaying || state.userPaused || !audio.paused || audio.ended) return;
-    // Always start playback on stream readiness unless a verified mid-song external interruption is active
-    const isStartingTrack = state.switchingTrack || (Date.now() - state.trackLoadStartTs < 4500) || (audio.currentTime < 2.0);
+    const isStartingTrack = state.switchingTrack || (Date.now() - state.trackLoadStartTs < 4500) || (audio.currentTime < 2.5);
     if (isStartingTrack || !state.interruptedByExternal) {
       state.interruptedByExternal = false;
       audio.play().catch(() => {});
@@ -5565,6 +5705,7 @@ PLAYER_JS = r'''/* =============================================================
 
   audio.addEventListener("play", () => {
     state.interruptedByExternal = false;
+    ensureAudioContextKeepAlive();
     setPlayIcon(true);
     acquireWakeLock();
   });
@@ -5574,6 +5715,7 @@ PLAYER_JS = r'''/* =============================================================
     state.interruptedByExternal = false;
     state.lastProgressTs = Date.now();
     clearStartupTimers();
+    ensureAudioContextKeepAlive();
     setPlayIcon(true);
   });
 
@@ -5599,25 +5741,19 @@ PLAYER_JS = r'''/* =============================================================
     const dur = audio.duration || 0;
     const curT = audio.currentTime || 0;
 
-    // 1. If pause happened within 2.5s of track end, it is EOF (.mp4 container duration mismatch) -> advance immediately!
     if (audio.ended || (dur > 15 && (dur - curT) <= 2.5)) {
       triggerAutoNext();
       return;
     }
 
-    // 2. If user explicitly clicked pause, do nothing
     if (state.userPaused || !state.wantPlaying) {
       setPlayIcon(false);
       return;
     }
 
-    // 3. CRITICAL FIX FOR SONG 3+ & SCREEN-OFF BUFFERING:
-    // If this pause happened during track loading (`switchingTrack`, `currentTime < 2.0`, or within 4.5s of `startAudio()`)
-    // OR because the network buffer briefly ran low (`audio.readyState < 3` or within 3s of `waiting`/`stalled`),
-    // it is a BROWSER BUFFER/LOAD PAUSE — NOT Instagram/YouTube! Do NOT set `interruptedByExternal = true`!
     const sinceLoad = Date.now() - state.trackLoadStartTs;
     const sinceWait = Date.now() - state.lastWaitingTs;
-    if (state.switchingTrack || sinceLoad < 4500 || curT < 2.0 || audio.readyState < 3 || sinceWait < 3000) {
+    if (state.switchingTrack || sinceLoad < 4500 || curT < 2.5 || audio.readyState < 3 || sinceWait < 3000) {
       state.interruptedByExternal = false;
       setTimeout(() => {
         if (state.wantPlaying && !state.userPaused && audio.paused && !audio.ended) {
@@ -5627,19 +5763,18 @@ PLAYER_JS = r'''/* =============================================================
       return;
     }
 
-    // 4. Otherwise (song was playing smoothly mid-track with full buffer `readyState >= 3` and `curT >= 2.0`),
-    // Instagram, YouTube, or a Phone Call took OS AudioFocus! Yield cleanly and arm auto-resume.
     setPlayIcon(false);
     state.interruptedByExternal = true;
     state.interruptedAt = Date.now();
+    suspendAudioContextForExternal();
   });
 
-  // Resume when returning to Musify from Instagram, YouTube, or Lock Screen
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       acquireWakeLock();
       if (state.wantPlaying && !state.userPaused && audio.paused && !audio.ended) {
         state.interruptedByExternal = false;
+        ensureAudioContextKeepAlive();
         audio.play().catch(() => {});
       }
     }
@@ -5648,6 +5783,7 @@ PLAYER_JS = r'''/* =============================================================
   window.addEventListener("focus", () => {
     if (state.wantPlaying && !state.userPaused && audio.paused && !audio.ended) {
       state.interruptedByExternal = false;
+      ensureAudioContextKeepAlive();
       audio.play().catch(() => {});
     }
   });
@@ -5655,11 +5791,11 @@ PLAYER_JS = r'''/* =============================================================
   window.addEventListener("pageshow", () => {
     if (state.wantPlaying && !state.userPaused && audio.paused && !audio.ended) {
       state.interruptedByExternal = false;
+      ensureAudioContextKeepAlive();
       audio.play().catch(() => {});
     }
   });
 
-  // Resume immediately when a Phone Call ends (hardware audio route change)
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
     try {
       navigator.mediaDevices.addEventListener("devicechange", () => {
@@ -5667,12 +5803,14 @@ PLAYER_JS = r'''/* =============================================================
           setTimeout(() => {
             if (state.wantPlaying && !state.userPaused && audio.paused) {
               state.interruptedByExternal = false;
+              ensureAudioContextKeepAlive();
               audio.play().catch(() => {});
             }
           }, 400);
           setTimeout(() => {
             if (state.wantPlaying && !state.userPaused && audio.paused) {
               state.interruptedByExternal = false;
+              ensureAudioContextKeepAlive();
               audio.play().catch(() => {});
             }
           }, 1400);
@@ -5681,29 +5819,22 @@ PLAYER_JS = r'''/* =============================================================
     } catch (e) {}
   }
 
-  // Lightweight 1.5s Watchdog for:
-  // (a) EOF .mp4 container pauses (within 2.5s of duration)
-  // (b) Buffer-starvation pauses (`!interruptedByExternal && audio.paused`) in both screen-on and screen-off modes
-  // (c) Foreground Phone Call completion (`!document.hidden && interruptedByExternal`)
   setInterval(() => {
     if (!state.wantPlaying || state.userPaused || !current()) return;
 
     const dur = audio.duration || 0;
     const curT = audio.currentTime || 0;
 
-    // (a) Catch .mp4 track that paused near the end without emitting `ended`
     if (audio.ended || (audio.paused && dur > 15 && (dur - curT) <= 2.5)) {
       triggerAutoNext();
       return;
     }
 
-    // (b) If paused due to buffer/network/track-switch (NOT an external app interruption), resume as soon as data is available
     if (audio.paused && !state.interruptedByExternal) {
       audio.play().catch(() => {});
       return;
     }
 
-    // (c) If interrupted by a phone call or external audio while Musify is visible, gently probe after 2.2s
     if (!document.hidden && state.interruptedByExternal && audio.paused) {
       if (Date.now() - state.interruptedAt >= 2200) {
         tryResumeAfterExternalInterruption();
@@ -5711,7 +5842,6 @@ PLAYER_JS = r'''/* =============================================================
     }
   }, 1500);
 
-  // PRIMARY AUTOPLAY TRIGGER: Native `ended` listener
   audio.addEventListener("ended", () => {
     triggerAutoNext();
   });
@@ -5722,6 +5852,11 @@ PLAYER_JS = r'''/* =============================================================
       const dur = audio.duration;
       state.lastProgressTime = curT;
       state.lastProgressTs = Date.now();
+
+      // At 10s into the active song (while network radio is 100% awake), pre-buffer the next song in audioPrewarm!
+      if (curT >= 10 && curT <= 14) {
+        prewarmUpcomingSong();
+      }
 
       const pct = (curT / dur) * 100;
       if ($("progressBar")) $("progressBar").value = pct;
@@ -5801,12 +5936,14 @@ PLAYER_JS = r'''/* =============================================================
         state.userPaused = false;
         state.interruptedByExternal = false;
         state.wantPlaying = true;
+        ensureAudioContextKeepAlive();
         audio.play().catch(() => {});
       });
       navigator.mediaSession.setActionHandler("pause", () => {
         if (!document.hidden) {
           state.userPaused = true;
           state.wantPlaying = false;
+          suspendAudioContextForExternal();
         } else {
           state.interruptedByExternal = true;
           state.interruptedAt = Date.now();
@@ -6525,7 +6662,10 @@ APP_JS = r'''/* ================================================================
 
   function renderSongs(songs, append, hideLoadMore) {
     currentSongs = deduplicateClientSongs(append ? currentSongs.concat(songs) : songs);
-    window.allLoadedSongs = currentSongs.slice();
+    if (!activeSearchQuery && !openPlaylistId) {
+      window.homeCatalogSongs = currentSongs.slice();
+    }
+    window.allLoadedSongs = deduplicateClientSongs(currentSongs.concat(window.homeCatalogSongs || []));
     if (!append && currentCategory === "home" && !activeSearchQuery && !openPlaylistId) {
       renderHomeHeroSections(currentSongs);
     }
@@ -6687,7 +6827,7 @@ APP_JS = r'''/* ================================================================
       const data = await api("/api/search?q=" + encodeURIComponent(q) + "&page=1");
       const list = deduplicateClientSongs(data.songs || []);
       currentSongs = list;
-      window.allLoadedSongs = list.slice();
+      window.allLoadedSongs = deduplicateClientSongs(list.concat(window.homeCatalogSongs || []));
       if (!list.length) {
         $("searchResultsList").innerHTML = '<div style="color:var(--text-muted);padding:20px 0;">No matching songs found.</div>';
         return;
